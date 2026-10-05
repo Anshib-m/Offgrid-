@@ -103,7 +103,8 @@ test('consent, verification, provenance, emergency', async () => {
   assert.equal(busy.status, 409); assert.match(busy.body.error, /not available/, 'busy doctors cannot be assigned')
   await call('PATCH', '/hospital/me/availability', docB, { status: 'AVAILABLE' })
   assert.equal((await call('PATCH', '/hospital/me/availability', deskB, { status: 'BUSY' })).status, 401, 'reception has no availability')
-  assert.equal((await call('POST', '/hospital/visits', docA, { patientId: scan.patientId, doctorId: mehta.id, reason: 'other hospital' })).status, 404, 'a doctor of another hospital cannot be assigned')
+  // refused either way: 403 if the other hospital has never met this patient, 404 (doctor not found) if it has
+  assert.ok([403, 404].includes((await call('POST', '/hospital/visits', docA, { patientId: scan.patientId, doctorId: mehta.id, reason: 'other hospital' })).status), 'a doctor of another hospital cannot be assigned')
 
   const arrQr = (await call('POST', '/patient/qr', patient)).body.token
   assert.equal((await call('POST', '/hospital/visits/arrive', deskB, { token: arrQr })).status, 401, 'only doctors scan on arrival')

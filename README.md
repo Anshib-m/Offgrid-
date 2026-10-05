@@ -20,7 +20,7 @@ Doctors **sign** the records they create, so everyone can tell a real clinical r
 | **Selected track** | Cyber in Healthcare |
 | **Challenge** | Challenge 4: `TODO: challenge title` |
 | **License** | [MIT](LICENSE) |
-| **Final version for judging** | `TODO: tag / release / commit, set before the deadline` |
+| **Final version for judging** | Git tag [`v1.0-submission`](https://github.com/Anshib-m/Offgrid-/tree/v1.0-submission) |
 
 ## Contents
 
@@ -240,6 +240,8 @@ Emergency card code: `DEMO-EMERGENCY-CARD-ASHA` (used on the hospital portal's E
 
 Asha already has history at City General (a surgery, lab, medication and discharge records, a dermatology consult, an unverified blood test, and a follow-up).
 
+**Pitch deck and talk script:** [docs/pitch/Offgrid-pitch.pdf](docs/pitch/Offgrid-pitch.pdf) (editable: [`.pptx`](docs/pitch/Offgrid-pitch.pptx)) and the timed 5-minute [script](docs/pitch/SCRIPT.md).
+
 **Part 1: Share records between hospitals**
 1. **Patient app**, signed in as `asha@example.test`. Home, tap **Show my QR**. Copy the code shown under the QR.
 2. **Hospital tab, `desk@riverside.test`** (Riverside reception). Patient Desk, paste the code, **Identify patient**. Only name and age appear.
@@ -310,7 +312,7 @@ Also: one end-to-end test and manual checks, no independent penetration test. Th
 ```
 .
 ├── README.md  LICENSE  .gitignore  .env.example
-├── docs/                 threat model, testing evidence, screenshots
+├── docs/                 threat model, testing evidence, screenshots, pitch deck
 ├── server/
 │   ├── src/              API (routes, consent engine, crypto, audit)
 │   ├── prisma/           database schema and migrations

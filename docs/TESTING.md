@@ -98,7 +98,9 @@ The single test (`server/test/flow.test.ts`) walks the whole patient journey and
 | ![Patient home](screenshots/patient-home.jpg) Patient home | ![Home activity](screenshots/patient-home-activity.jpg) Profile, emergency card, activity |
 | ![Access history](screenshots/patient-access-history.jpg) Access history | ![Profile](screenshots/patient-profile.jpg) Profile |
 | ![Forgot password](screenshots/patient-forgot-password.jpg) Forgot password | ![Hospital workspace](screenshots/hospital-workspace.jpg) Hospital patient workspace |
-| ![Signed records](screenshots/hospital-signed-records.jpg) Signed records with provenance | |
+| ![Signed records](screenshots/hospital-signed-records.jpg) Signed records with provenance | ![Assign a doctor](screenshots/reception-assign-doctor.jpg) Reception assigns an available doctor |
+| ![My Patients](screenshots/doctor-my-patients.jpg) Doctor's My Patients page | ![Consultation started](screenshots/doctor-consultation-started.jpg) Arrival scan started the consultation |
+| ![My doctors](screenshots/patient-my-doctors.jpg) Patient's My doctors section | ![Doctor revoked](screenshots/patient-doctor-revoked.jpg) A doctor revoked, others unaffected |
 
 ## Limits of this testing
 
