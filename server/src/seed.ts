@@ -8,8 +8,30 @@ const PASSWORD = 'demo1234'
 const CARD_CODE = 'DEMO-EMERGENCY-CARD-ASHA'
 const days = (n: number) => new Date(Date.now() + n * 86_400_000)
 
-if (await prisma.hospital.count()) { console.log('already seeded'); process.exit(0) }
 const passwordHash = await bcrypt.hash(PASSWORD, 10)
+
+// Third demo hospital. Idempotent, so `npm run seed` also adds it to a database that is already seeded.
+async function ensureLakeside() {
+  const h = await prisma.hospital.upsert({
+    where: { licenseNumber: 'HOSP-C-003' }, update: {},
+    create: { name: 'Lakeside Community Hospital', licenseNumber: 'HOSP-C-003', address: '5 Lake View Road', contactEmail: 'admin@lakeside.test' },
+  })
+  const people = [
+    { role: 'STAFF' as const, fullName: 'Divya (Reception)', email: 'desk@lakeside.test', extra: {} },
+    { role: 'DOCTOR' as const, fullName: 'Dr. Arun Nair', email: 'dr.nair@lakeside.test', extra: { licenseNumber: 'MED-3001', specialty: 'Internal Medicine', ...newSigningKeys() } },
+  ]
+  for (const p of people) {
+    if (await prisma.staff.findUnique({ where: { email: p.email } })) continue
+    await prisma.staff.create({ data: { hospitalId: h.id, role: p.role, fullName: p.fullName, email: p.email, passwordHash, ...p.extra } })
+  }
+}
+
+if (await prisma.hospital.count()) {
+  await ensureLakeside()
+  console.log('already seeded. Ensured Lakeside Community Hospital: desk@lakeside.test, dr.nair@lakeside.test (password demo1234)')
+  await prisma.$disconnect()
+  process.exit(0)
+}
 
 const A = await prisma.hospital.create({ data: { name: 'City General Hospital', licenseNumber: 'HOSP-A-001', address: '12 Park Road', contactEmail: 'admin@citygeneral.test' } })
 const B = await prisma.hospital.create({ data: { name: 'Riverside Medical Centre', licenseNumber: 'HOSP-B-002', address: '88 River Street', contactEmail: 'admin@riverside.test' } })
@@ -44,9 +66,11 @@ await prisma.medicalRecord.create({
 })
 await prisma.followUpReminder.create({ data: { patientId: asha.id, hospitalId: A.id, doctorId: drRao.id, followUpDate: new Date('2026-11-20'), reason: 'Post-surgery examination', instructions: 'Bring previous reports' } })
 
+await ensureLakeside()
 console.log(`seeded. password for every account: ${PASSWORD}
 patient:  asha@example.test
 hospital A (City General):  dr.rao@citygeneral.test (doctor), desk@citygeneral.test (reception)
 hospital B (Riverside):     dr.mehta@riverside.test (doctor), desk@riverside.test (reception)
+hospital C (Lakeside):      dr.nair@lakeside.test (doctor), desk@lakeside.test (reception)
 emergency card code: ${CARD_CODE}`)
 await prisma.$disconnect()

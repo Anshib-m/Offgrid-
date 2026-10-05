@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Project name** | Offgrid |
-| **Team name** | `TODO: team name` |
+| **Team name** | Offgrid |
 | **Event** | ASTRA 2026, Cyber in Healthcare |
 | **Selected track** | `TODO: selected track` |
 | **Challenge** | `TODO: challenge number and title` |
@@ -139,6 +139,7 @@ These are **synthetic** accounts created by the seed script for local use only. 
 | Patient (Asha) | `asha@example.test` (patient app) | `demo1234` |
 | Hospital A doctor / reception | `dr.rao@citygeneral.test` / `desk@citygeneral.test` | `demo1234` |
 | Hospital B doctor / reception | `dr.mehta@riverside.test` / `desk@riverside.test` | `demo1234` |
+| Hospital C doctor / reception | `dr.nair@lakeside.test` / `desk@lakeside.test` | `demo1234` |
 | Emergency card code | `DEMO-EMERGENCY-CARD-ASHA` (Emergency page) | n/a |
 
 ## Demo instructions (about 5 minutes)
@@ -241,11 +242,14 @@ Android needs the Android SDK. iOS needs Xcode, an iOS Simulator runtime and Coc
 
 ## Team members and contributions
 
+Team **Offgrid**.
+
 | Member | Contribution | GitHub |
 |---|---|---|
-| Anshib-m | `TODO: role and contribution` | [@Anshib-m](https://github.com/Anshib-m) |
-| `TODO: name` | `TODO: role and contribution` | `TODO` |
-| `TODO: name` | `TODO: role and contribution` | `TODO` |
+| Anshib M | Contributor | [@Anshib-m](https://github.com/Anshib-m) |
+| Ahmed Safwan | Contributor | |
+| Joffin Jaison | Contributor | |
+| Alan KP | Contributor | |
 
 ## Third-party components
 
@@ -264,4 +268,4 @@ Tools used while building: the hospital dashboard look was prototyped with Googl
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Offgrid team. All code, documentation, scripts and design artifacts in this repository are released under this license.
+[MIT](LICENSE). Copyright (c) 2026 Offgrid team (Anshib M, Ahmed Safwan, Joffin Jaison, Alan KP). All code, documentation, scripts and design artifacts in this repository are released under this license.
