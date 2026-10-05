@@ -129,7 +129,7 @@ const daysLeft = (d: string) => Math.ceil((+new Date(d) - Date.now()) / 86_400_0
 const ACTION_LABEL: Record<string, string> = {
   PHOTO_READ: 'viewed your profile photo', ACCESS_RELINQUISHED: 'ended its access to your records', PASSWORD_RESET: 'reset your password', RECORD_DELETED: 'deleted a record', DOB_CHANGED: 'changed your date of birth', PATIENT_REGISTERED: 'registered you',
   QR_SCANNED: 'scanned your QR', ACCESS_REQUESTED: 'requested access', CONSENT_GRANTED: 'access approved', CONSENT_DENIED: 'request denied', CONSENT_REVOKED: 'access revoked',
-  RECORDS_READ: 'viewed your records', RECORD_CREATED: 'added a record', RECORD_VERIFIED: 'verified a record', DISCHARGED: 'discharged you', FOLLOWUP_CREATED: 'set a follow-up', DOCUMENT_READ: 'opened a document',
+  RECORDS_READ: 'viewed your records', RECORD_CREATED: 'added a record', RECORD_VERIFIED: 'verified a record', DISCHARGED: 'discharged you', FOLLOWUP_CREATED: 'set a follow-up', FOLLOWUP_DELETED: 'removed a follow-up', DOCUMENT_READ: 'opened a document',
 }
 const actionLabel = (a: string) => (a.startsWith('EMERGENCY_ACCESS') ? 'used your emergency card' : ACTION_LABEL[a] ?? a.toLowerCase().replace(/_/g, ' '))
 

@@ -436,7 +436,10 @@ function FollowUps({ patient, toast }: { patient: Patient; toast: Toast }) {
           <div className="card" key={r.id}>
             <div className="row"><b>{r.reason}</b><Badge kind={r.status}>{r.status}</Badge></div>
             <div className="muted">{fmtDate(r.followUpDate)}{r.instructions && ` · ${r.instructions}`}</div>
-            {r.status === 'UPCOMING' && <button className="ghost" onClick={() => guard(toast, async () => { await api.call('PATCH', `/hospital/follow-ups/${r.id}`, { status: 'COMPLETED' }); load() })}>Mark completed</button>}
+            <div className="gap" style={{ marginTop: 8 }}>
+              {r.status === 'UPCOMING' && <button className="ghost" onClick={() => guard(toast, async () => { await api.call('PATCH', `/hospital/follow-ups/${r.id}`, { status: 'COMPLETED' }); load() })}>Mark completed</button>}
+              <button className="danger" onClick={() => { if (confirm(`Delete the follow-up "${r.reason}"? The patient will no longer see it.`)) guard(toast, async () => { await api.call('DELETE', `/hospital/follow-ups/${r.id}`); toast('Follow-up deleted'); load() }) }}><Icon n="delete" />Delete</button>
+            </div>
           </div>
         ))}
       </div>

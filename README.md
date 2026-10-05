@@ -159,7 +159,7 @@ Seeded data lives at Hospital A: signed surgery, lab, medication and discharge r
 
 ## Testing and evaluation results
 
-`npm test` runs an end-to-end scenario with **54 assertions** against the real API and PostgreSQL. **Latest result: 1 test, 1 pass, 0 fail.** Type checks (`tsc`) pass for the API and the web apps.
+`npm test` runs an end-to-end scenario with **59 assertions** against the real API and PostgreSQL. **Latest result: 1 test, 1 pass, 0 fail.** Type checks (`tsc`) pass for the API and the web apps.
 
 It covers authentication and authorization, QR single use, consent checks (including narrowing, revoking and hospital-ended access), record verification and signatures, deletion rules, profile photo rules, date-of-birth changes, password reset with lockout, emergency access and audit visibility.
 

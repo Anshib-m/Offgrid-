@@ -80,6 +80,14 @@ test('consent, verification, provenance, emergency', async () => {
   const bad = new FormData(); bad.append('file', new Blob(['%PDF-1.4'], { type: 'application/pdf' }), 'x.pdf')
   assert.equal((await fetch(base + '/patient/me/photo', { method: 'POST', headers: { authorization: `Bearer ${patient}` }, body: bad })).status, 400, 'photo must be an image')
 
+  // follow-ups: created by a hospital, deletable only by that hospital
+  const fu = await call('POST', `/hospital/patients/${scan.patientId}/follow-ups`, deskB, { date: '2026-12-01', reason: 'Entered by mistake' })
+  assert.equal(fu.status, 201)
+  assert.equal((await call('DELETE', `/hospital/follow-ups/${fu.body.id}`, docA)).status, 404, 'another hospital cannot delete it')
+  assert.ok((await call('GET', '/patient/reminders', patient)).body.some((r: any) => r.id === fu.body.id), 'patient sees it')
+  assert.equal((await call('DELETE', `/hospital/follow-ups/${fu.body.id}`, deskB)).status, 200)
+  assert.ok(!(await call('GET', '/patient/reminders', patient)).body.some((r: any) => r.id === fu.body.id), 'gone for the patient too')
+
   // revoke ends access immediately
   const consents = (await call('GET', '/patient/consents', patient)).body
   const active = consents.find((c: any) => !c.revokedAt && c.hospital?.startsWith('Riverside'))

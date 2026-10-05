@@ -278,6 +278,16 @@ hospitalRouter.patch('/follow-ups/:id', async (req, res) => {
   res.json({ ok: true })
 })
 
+// A hospital can remove a follow-up it created (e.g. entered by mistake). Other hospitals cannot touch it.
+hospitalRouter.delete('/follow-ups/:id', async (req, res) => {
+  const r = await prisma.followUpReminder.findFirst({ where: { id: String(req.params.id), hospitalId: hid(req) } })
+  if (!r) throw new HttpError(404, 'follow-up not found')
+  await prisma.followUpReminder.delete({ where: { id: r.id } })
+  await audit(r.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'FOLLOWUP_DELETED', purpose: r.reason })
+  emit(`patient:${r.patientId}`, 'reminders', {})
+  res.json({ ok: true })
+})
+
 // ---- emergency: critical fields only, 1h grant, patient notified, always audited
 const critical = (p: { firstName: string; lastName: string; dob: Date; bloodGroup: string | null; allergies: string | null; chronicConditions: string | null; emergencyContactName: string | null; emergencyContactPhone: string | null }) =>
   ({ name: `${p.firstName} ${p.lastName}`, dob: p.dob, bloodGroup: p.bloodGroup, allergies: p.allergies, chronicConditions: p.chronicConditions, emergencyContactName: p.emergencyContactName, emergencyContactPhone: p.emergencyContactPhone })
