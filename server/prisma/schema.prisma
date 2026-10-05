@@ -1,0 +1,279 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  DOCTOR
+  STAFF
+}
+
+enum Category {
+  SURGERY
+  LAB
+  IMAGING
+  MEDICATION
+  ALLERGY
+  DIAGNOSIS
+  CONSULTATION
+  DISCHARGE
+  OTHER
+  PROFILE
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  VERIFIED
+}
+
+enum RecordSource {
+  HOSPITAL
+  PATIENT_UPLOAD
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+  REVOKED
+}
+
+enum ReminderStatus {
+  UPCOMING
+  COMPLETED
+  MISSED
+  CANCELLED
+}
+
+enum CardKind {
+  CARD
+  FAMILY
+}
+
+model Hospital {
+  id             String             @id @default(uuid()) @db.Uuid
+  name           String
+  licenseNumber  String             @unique
+  address        String
+  contactEmail   String             @unique
+  createdAt      DateTime           @default(now())
+  staff          Staff[]
+  records        MedicalRecord[]
+  requestsMade   AccessRequest[]    @relation("requesting")
+  requestsSource AccessRequest[]    @relation("source")
+  reminders      FollowUpReminder[]
+}
+
+// Doctors and other hospital users. Only DOCTOR rows hold signing keys.
+model Staff {
+  id             String               @id @default(uuid()) @db.Uuid
+  hospitalId     String               @db.Uuid
+  hospital       Hospital             @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  role           Role
+  fullName       String
+  email          String               @unique
+  passwordHash   String
+  licenseNumber  String?              @unique
+  specialty      String?
+  publicKeyPem   String?
+  signingKeyEnc  String? // Ed25519 private key, AES-GCM encrypted. Simulated HSM.
+  createdAt      DateTime             @default(now())
+  createdRecords MedicalRecord[]
+  verifications  RecordVerification[]
+}
+
+model Patient {
+  id                    String          @id @default(uuid()) @db.Uuid
+  email                 String          @unique
+  passwordHash          String
+  firstName             String
+  lastName              String
+  dob                   DateTime        @db.Date
+  gender                String
+  phone                 String
+  bloodGroup            String?
+  allergies             String?
+  chronicConditions     String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  createdAt             DateTime        @default(now())
+  identityTokens        IdentityToken[]
+  emergencyCards        EmergencyCard[]
+  records               MedicalRecord[]
+  accessRequests        AccessRequest[]
+}
+
+// Short-lived opaque QR/NFC token. Carries no patient data.
+model IdentityToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  patientId String    @db.Uuid
+  nonce     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  patient   Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+// Proof a hospital physically scanned the patient. Required to open an access request.
+model Scan {
+  id         String   @id @default(uuid()) @db.Uuid
+  patientId  String   @db.Uuid
+  hospitalId String   @db.Uuid
+  staffId    String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  @@index([patientId, hospitalId])
+}
+
+model EmergencyCard {
+  id         String    @id @default(uuid()) @db.Uuid
+  patientId  String    @db.Uuid
+  kind       CardKind  @default(CARD)
+  holderName String
+  code       String    @unique
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  patient    Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+model EmergencyGrant {
+  id         String   @id @default(uuid()) @db.Uuid
+  patientId  String   @db.Uuid
+  hospitalId String   @db.Uuid
+  staffId    String   @db.Uuid
+  cardId     String   @db.Uuid
+  reason     String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+model MedicalRecord {
+  id           String              @id @default(uuid()) @db.Uuid
+  patientId    String              @db.Uuid
+  patient      Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  source       RecordSource
+  hospitalId   String?             @db.Uuid
+  hospital     Hospital?           @relation(fields: [hospitalId], references: [id])
+  createdById  String?             @db.Uuid
+  createdBy    Staff?              @relation(fields: [createdById], references: [id])
+  category     Category
+  title        String
+  notesEnc     String? // AES-GCM encrypted clinical notes
+  recordDate   DateTime            @db.Date
+  status       VerificationStatus  @default(UNVERIFIED)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  documents    MedicalDocument[]
+  verification RecordVerification?
+
+  @@index([patientId, category])
+  @@index([patientId, hospitalId])
+}
+
+model MedicalDocument {
+  id         String        @id @default(uuid()) @db.Uuid
+  recordId   String        @db.Uuid
+  record     MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  patientId  String        @db.Uuid
+  fileRef    String // path inside the upload dir, never user-controlled
+  fileName   String
+  fileType   String
+  sha256     String
+  uploadedAt DateTime      @default(now())
+}
+
+model RecordVerification {
+  id          String        @id @default(uuid()) @db.Uuid
+  recordId    String        @unique @db.Uuid
+  record      MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  doctorId    String        @db.Uuid
+  doctor      Staff         @relation(fields: [doctorId], references: [id])
+  contentHash String
+  signature   String // Ed25519 over contentHash
+  verifiedAt  DateTime      @default(now())
+}
+
+model AccessRequest {
+  id                   String        @id @default(uuid()) @db.Uuid
+  patientId            String        @db.Uuid
+  patient              Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  requestingHospitalId String        @db.Uuid
+  requestingHospital   Hospital      @relation("requesting", fields: [requestingHospitalId], references: [id])
+  sourceHospitalId     String?       @db.Uuid
+  sourceHospital       Hospital?     @relation("source", fields: [sourceHospitalId], references: [id])
+  requestedBy          String        @db.Uuid
+  categories           Category[]
+  reason               String
+  status               RequestStatus @default(PENDING)
+  createdAt            DateTime      @default(now())
+  expiresAt            DateTime
+  consent              Consent?
+
+  @@index([patientId, status])
+  @@index([requestingHospitalId, status])
+}
+
+model Consent {
+  id               String        @id @default(uuid()) @db.Uuid
+  patientId        String        @db.Uuid
+  hospitalId       String        @db.Uuid
+  requestId        String        @unique @db.Uuid
+  request          AccessRequest @relation(fields: [requestId], references: [id])
+  sourceHospitalId String?       @db.Uuid // null = any hospital's records in scope
+  categories       Category[]
+  grantedAt        DateTime      @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([patientId, hospitalId])
+}
+
+model DischargeRecord {
+  id             String             @id @default(uuid()) @db.Uuid
+  patientId      String             @db.Uuid
+  hospitalId     String             @db.Uuid
+  recordId       String             @db.Uuid
+  prescriptionId String?            @db.Uuid
+  dischargeDate  DateTime           @db.Date
+  instructions   String
+  followUpNeeded Boolean            @default(false)
+  createdAt      DateTime           @default(now())
+  reminders      FollowUpReminder[]
+}
+
+model FollowUpReminder {
+  id           String           @id @default(uuid()) @db.Uuid
+  patientId    String           @db.Uuid
+  hospitalId   String           @db.Uuid
+  hospital     Hospital         @relation(fields: [hospitalId], references: [id])
+  doctorId     String?          @db.Uuid
+  dischargeId  String?          @db.Uuid
+  discharge    DischargeRecord? @relation(fields: [dischargeId], references: [id])
+  followUpDate DateTime         @db.Date
+  reason       String
+  instructions String?
+  status       ReminderStatus   @default(UPCOMING)
+  createdAt    DateTime         @default(now())
+
+  @@index([patientId, status])
+}
+
+// Append-only (DB trigger). Pseudonymous: HMAC(patientId, pepper). No readable PII.
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  txId       String   @unique @default(uuid()) @db.Uuid
+  patientRef String
+  hospitalId String?  @db.Uuid
+  staffId    String?  @db.Uuid
+  action     String
+  purpose    String
+  createdAt  DateTime @default(now())
+
+  @@index([patientRef, createdAt])
+  @@index([hospitalId, createdAt])
+}

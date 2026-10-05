@@ -1,0 +1,23 @@
+{
+  "name": "offgrid",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "db": "npm run db -w server",
+    "migrate": "npm run migrate -w server",
+    "seed": "npm run seed -w server",
+    "server": "npm run dev -w server",
+    "web": "npm run dev -w web",
+    "test": "npm test -w server"
+  },
+  "allowScripts": {
+    "@embedded-postgres/darwin-arm64@18.4.0-beta.17": true,
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "prisma@6.19.3": true
+  }
+}
