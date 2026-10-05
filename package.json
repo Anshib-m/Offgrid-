@@ -19,5 +19,6 @@
     "@prisma/engines@6.19.3": true,
     "esbuild@0.28.2": true,
     "prisma@6.19.3": true
-  }
+  },
+  "license": "MIT"
 }

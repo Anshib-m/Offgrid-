@@ -3,3 +3,7 @@ dist
 .env
 .pgdata
 server/uploads
+.env.*
+!.env.example
+mobile/.claude/
+.DS_Store
