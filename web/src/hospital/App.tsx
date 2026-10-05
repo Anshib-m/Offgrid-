@@ -4,7 +4,7 @@ import { Avatar, Badge, catLabel, fmtDate, fmtTime, guard, Icon, RecordCard, REC
 
 const api = createApi('og_staff')
 type Toast = (t: string, e?: boolean) => void
-type Me = { id: string; fullName: string; role: 'DOCTOR' | 'STAFF'; specialty: string | null; hospital: { id: string; name: string } }
+type Me = { id: string; fullName: string; role: 'DOCTOR' | 'STAFF'; specialty: string | null; availability?: string; hospital: { id: string; name: string } }
 type Patient = { scanId: string; patientId: string; name: string; age?: number }
 const stripPrefix = (s: string) => s.trim().replace(/^offgrid:(id|em):/, '')
 
@@ -32,12 +32,15 @@ function Login({ onDone }: { onDone: () => void }) {
 }
 
 
+const BOTH = ['DOCTOR', 'STAFF'] as const
 const NAV = [
-  { id: 'Patient desk', label: 'Patient Desk & Scan', icon: 'qr_code_scanner' },
-  { id: 'Active patients', label: 'Active Patients', icon: 'groups' },
-  { id: 'Requests', label: 'Access Requests', icon: 'verified_user' },
-  { id: 'Emergency', label: 'Emergency Access', icon: 'local_hospital', warn: true },
-  { id: 'Audit log', label: 'Audit Trail', icon: 'receipt_long' },
+  { id: 'My patients', label: 'My Patients', icon: 'stethoscope', roles: ['DOCTOR'] },
+  { id: 'Patient desk', label: 'Patient Desk & Scan', icon: 'qr_code_scanner', roles: BOTH },
+  { id: 'Active patients', label: 'Active Patients', icon: 'groups', roles: BOTH },
+  { id: 'Doctors', label: 'Doctors & Assignments', icon: 'assignment_ind', roles: BOTH },
+  { id: 'Requests', label: 'Access Requests', icon: 'verified_user', roles: BOTH },
+  { id: 'Emergency', label: 'Emergency Access', icon: 'local_hospital', warn: true, roles: BOTH },
+  { id: 'Audit log', label: 'Audit Trail', icon: 'receipt_long', roles: BOTH },
 ] as const
 type Page = (typeof NAV)[number]['id']
 
@@ -63,8 +66,11 @@ function Shell() {
     const open = ws.open.filter(x => x.patientId !== id)
     save({ open, activeId: ws.activeId === id ? open[open.length - 1]?.patientId ?? null : ws.activeId })
   }
-  useEffect(() => { api.call('GET', '/hospital/me').then(setMe) }, [])
-  useSSE(api, '/hospital/events', { 'request-updated': () => { setTick(t => t + 1); toast('Patient responded to an access request') } })
+  useEffect(() => { api.call('GET', '/hospital/me').then(m => { setMe(m); if (m.role === 'DOCTOR') setPage('My patients') }) }, [])
+  useSSE(api, '/hospital/events', {
+    'request-updated': () => { setTick(t => t + 1); toast('Patient responded to an access request') },
+    visit: () => setTick(t => t + 1),
+  })
   if (!me) return null
   const initials = me.fullName.split(' ').filter(w => !w.endsWith('.') && /^\p{L}/u.test(w)).map(w => w[0]).slice(0, 2).join('').toUpperCase()
   return (
@@ -73,7 +79,7 @@ function Shell() {
       <aside className="side">
         <div className="brand"><div className="logo"><Icon n="health_and_safety" /></div><div><b>OFFGRID HEALTH</b><span className="mono">{me.hospital.name}</span></div></div>
         <nav>
-          {NAV.map(n => (
+          {NAV.filter(n => (n.roles as readonly string[]).includes(me.role)).map(n => (
             <button key={n.id} className={`${page === n.id ? 'on' : ''} ${'warn' in n ? 'warn' : ''}`} onClick={() => setPage(n.id)}><Icon n={n.icon} />{n.label}</button>
           ))}
         </nav>
@@ -92,6 +98,8 @@ function Shell() {
         </header>
         <main className="main">
           {page === 'Patient desk' && <Desk me={me} open={ws.open} activeId={ws.activeId} setActive={id => save({ ...ws, activeId: id })} add={p => openPatients([p])} close={closePatient} tick={tick} toast={toast} />}
+          {page === 'My patients' && <MyPatients me={me} tick={tick} toast={toast} onOpen={openPatients} />}
+          {page === 'Doctors' && <Assignments open={ws.open} tick={tick} toast={toast} onOpen={openPatients} />}
           {page === 'Active patients' && <ActivePatients open={ws.open} onOpen={openPatients} tick={tick} toast={toast} />}
           {page === 'Requests' && <Requests tick={tick} />}
           {page === 'Emergency' && <Emergency toast={toast} />}
@@ -178,10 +186,12 @@ function Workspace({ me, patient, tick, toast, close }: { me: Me; patient: Patie
   const [data, setData] = useState<any>(null)
   const [err, setErr] = useState('')
   const [audit, setAudit] = useState<any[]>([])
+  const [visit, setVisit] = useState<any>(null)
   const [now, setNow] = useState(Date.now())
   const load = useCallback(() => {
     api.call('GET', `/hospital/patients/${patient.patientId}/records`).then(d => { setData(d); setErr('') }).catch(e => { setData(null); setErr(e.message) })
     api.call('GET', '/hospital/audit').then(a => setAudit(a.slice(0, 5)))
+    api.call('GET', '/hospital/visits').then((vs: any[]) => setVisit(vs.find(v => v.patient.id === patient.patientId && (v.status === 'WAITING' || v.status === 'IN_CONSULT')) ?? null)).catch(() => {})
   }, [patient.patientId])
   useEffect(() => { load() }, [load, tick, tab])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
@@ -224,6 +234,21 @@ function Workspace({ me, patient, tick, toast, close }: { me: Me; patient: Patie
           </div>
         </div>
       </div>
+
+      {visit && (
+        <div className="card" style={{ borderColor: 'var(--primary-c)' }}>
+          <div className="row">
+            <div>
+              <h3 style={{ margin: 0 }}><Icon n="assignment_ind" style={{ color: 'var(--primary)' }} /> Visit: {visit.reason}</h3>
+              <div className="muted">Assigned to {visit.doctor.name}{visit.doctor.specialty ? ` (${visit.doctor.specialty})` : ''} · {visit.status === 'WAITING' ? `waiting ${waited(visit.createdAt)}` : `in consultation since ${fmtTime(visit.arrivedAt)}`}</div>
+            </div>
+            <div className="gap">
+              <Badge kind={visit.status}>{VISIT_LABEL[visit.status]}</Badge>
+              {visit.status === 'IN_CONSULT' && visit.doctor.id === me.id && <button onClick={() => guard(toast, async () => { await api.call('POST', `/hospital/visits/${visit.id}/complete`); toast('Visit completed'); load() })}><Icon n="task_alt" />Complete visit</button>}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="metrics">
         <div className="metric">
@@ -444,6 +469,168 @@ function FollowUps({ patient, toast }: { patient: Patient; toast: Toast }) {
         ))}
       </div>
     </div>
+  )
+}
+
+const VISIT_LABEL: Record<string, string> = { WAITING: 'WAITING', IN_CONSULT: 'IN CONSULTATION', COMPLETED: 'COMPLETED', CANCELLED: 'CANCELLED' }
+const waited = (d: string) => { const m = Math.max(0, Math.round((Date.now() - +new Date(d)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min` }
+
+function VisitCard({ v, actions }: { v: any; actions?: React.ReactNode }) {
+  return (
+    <div className="card" style={{ margin: 0 }}>
+      <div className="row" style={{ alignItems: 'flex-start' }}>
+        <div><h3 style={{ margin: 0 }}>{v.patient.name}</h3><div className="muted">Age {v.patient.age} · with {v.doctor.name}</div></div>
+        <Badge kind={v.status}>{VISIT_LABEL[v.status]}</Badge>
+      </div>
+      <p style={{ margin: '10px 0 4px' }}><b>Reason:</b> {v.reason}</p>
+      <div className="mono">{v.status === 'WAITING' ? `Waiting ${waited(v.createdAt)}` : v.status === 'IN_CONSULT' ? `Started ${fmtTime(v.arrivedAt)}` : fmtTime(v.completedAt ?? v.createdAt)}</div>
+      {actions && <div className="gap" style={{ marginTop: 12 }}>{actions}</div>}
+    </div>
+  )
+}
+
+// Doctor's own page: availability, the queue assigned by reception, and the arrival scan.
+function MyPatients({ me, tick, toast, onOpen }: { me: Me; tick: number; toast: Toast; onOpen: (ps: Patient[]) => void }) {
+  const [doctors, setDoctors] = useState<any[]>([])
+  const [visits, setVisits] = useState<any[]>([])
+  const [token, setToken] = useState('')
+  const [scanning, setScanning] = useState(false)
+  const load = useCallback(() => {
+    api.call('GET', '/hospital/doctors').then(setDoctors).catch(() => {})
+    api.call('GET', '/hospital/visits?mine=1').then(setVisits).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [load, tick])
+  useAutoRefresh(load)
+  const status = doctors.find(d => d.id === me.id)?.availability ?? me.availability ?? 'AVAILABLE'
+  const setStatus = (s: string) => guard(toast, async () => { await api.call('PATCH', '/hospital/me/availability', { status: s }); toast(`You are now ${s.replace('_', ' ').toLowerCase()}`); load() })
+  const arrive = (t: string) => guard(toast, async () => {
+    const r = await api.call('POST', '/hospital/visits/arrive', { token: stripPrefix(t) })
+    setScanning(false); setToken(''); toast(`${r.name} has arrived. Consultation started.`)
+    onOpen([{ scanId: r.scanId, patientId: r.patientId, name: r.name, age: r.age }])
+  })
+  const waiting = visits.filter(v => v.status === 'WAITING'), inConsult = visits.filter(v => v.status === 'IN_CONSULT')
+  const done = visits.filter(v => v.status === 'COMPLETED' || v.status === 'CANCELLED').reverse()
+  const openVisit = (v: any) => onOpen([{ scanId: '', patientId: v.patient.id, name: v.patient.name, age: v.patient.age }])
+  return (
+    <>
+      <h1><Icon n="stethoscope" style={{ color: 'var(--primary)', fontSize: 32 }} /> My patients</h1>
+      <div className="cols">
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>My availability</h3>
+          <p className="muted">Reception can only assign patients to you while you are available.</p>
+          <div className="subtabs" style={{ marginBottom: 0 }}>
+            {[['AVAILABLE', 'Available'], ['BUSY', 'Busy'], ['OFF_DUTY', 'Off duty']].map(([k, l]) => <button key={k} className={status === k ? 'on' : ''} onClick={() => setStatus(k)}>{l}</button>)}
+          </div>
+        </div>
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}><Icon n="qr_code_scanner" style={{ color: 'var(--secondary)' }} /> Patient arrived? Scan their QR</h3>
+          <p className="muted">Ask the patient to open their app and show their QR. Scanning starts the consultation and opens their file.</p>
+          {scanning ? <><Scanner onScan={arrive} /><button className="ghost" onClick={() => setScanning(false)}>Stop camera</button></> : <button className="ghost" onClick={() => setScanning(true)}><Icon n="photo_camera" />Open camera</button>}
+          <label style={{ marginTop: 14 }}>Code<input value={token} onChange={e => setToken(e.target.value)} placeholder="offgrid:id:…" /></label>
+          <button disabled={!token} onClick={() => arrive(token)}>Start consultation</button>
+        </div>
+      </div>
+
+      <h2>In consultation ({inConsult.length})</h2>
+      {inConsult.length === 0 && <p className="muted">No consultation in progress.</p>}
+      <div className="cols" style={{ alignItems: 'stretch' }}>
+        {inConsult.map(v => <VisitCard key={v.id} v={v} actions={<>
+          <button onClick={() => openVisit(v)}><Icon n="open_in_new" />Open patient file</button>
+          <button className="ghost" onClick={() => guard(toast, async () => { await api.call('POST', `/hospital/visits/${v.id}/complete`); toast('Visit completed'); load() })}><Icon n="task_alt" />Mark completed</button>
+        </>} />)}
+      </div>
+
+      <h2>Waiting for me ({waiting.length})</h2>
+      {waiting.length === 0 && <div className="help">No patients assigned to you right now.</div>}
+      <div className="cols" style={{ alignItems: 'stretch' }}>
+        {waiting.map(v => <VisitCard key={v.id} v={v} actions={<span className="muted"><Icon n="qr_code_scanner" style={{ fontSize: 18 }} /> Scan their QR when they arrive</span>} />)}
+      </div>
+
+      {done.length > 0 && <><h2>Finished in the last 24 hours</h2>
+        <div className="cols" style={{ alignItems: 'stretch' }}>{done.map(v => <VisitCard key={v.id} v={v} />)}</div></>}
+    </>
+  )
+}
+
+// Reception / doctors: see who is available and send a patient to them.
+function Assignments({ open, tick, toast, onOpen }: { open: Patient[]; tick: number; toast: Toast; onOpen: (ps: Patient[]) => void }) {
+  const [doctors, setDoctors] = useState<any[]>([])
+  const [visits, setVisits] = useState<any[]>([])
+  const [active, setActive] = useState<any[]>([])
+  const [patientId, setPatientId] = useState('')
+  const [reason, setReason] = useState('')
+  const load = useCallback(() => {
+    api.call('GET', '/hospital/doctors').then(setDoctors).catch(() => {})
+    api.call('GET', '/hospital/visits').then(setVisits).catch(() => {})
+    api.call('GET', '/hospital/active-patients').then(setActive).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [load, tick])
+  useAutoRefresh(load)
+  // patients this hospital already knows: approved ones plus anyone scanned or registered in this session
+  const options = [...new Map([...active.map(a => [a.patientId, a.name]), ...open.map(p => [p.patientId, p.name])] as [string, string][]).entries()]
+  const available = doctors.filter(d => d.availability === 'AVAILABLE')
+  const assign = (d: any) => guard(toast, async () => {
+    await api.call('POST', '/hospital/visits', { patientId, doctorId: d.id, reason })
+    toast(`Assigned to ${d.fullName}`); setReason(''); load()
+  })
+  const act = (q: Promise<unknown>, msg: string) => guard(toast, async () => { await q; toast(msg); load() })
+  const queue = visits.filter(v => v.status === 'WAITING' || v.status === 'IN_CONSULT')
+  const recent = visits.filter(v => v.status === 'COMPLETED' || v.status === 'CANCELLED').reverse()
+  const known = new Set(options.map(([id]) => id))
+  return (
+    <>
+      <h1><Icon n="assignment_ind" style={{ color: 'var(--primary)', fontSize: 32 }} /> Doctors &amp; assignments</h1>
+      <p className="muted">Send a patient to an available doctor. When the patient arrives, the doctor scans their QR to start the consultation.</p>
+
+      <div className="panel">
+        <h3 style={{ marginTop: 0 }}>1. Who needs a doctor?</h3>
+        <div className="cols">
+          <label>Patient
+            <select value={patientId} onChange={e => setPatientId(e.target.value)}>
+              <option value="">Select a patient…</option>
+              {options.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </label>
+          <label>Reason for the visit
+            <input value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Post-surgery review, chest pain" />
+          </label>
+        </div>
+        {options.length === 0 && <div className="help" style={{ marginBottom: 0 }}>No patients yet. Scan a patient's QR or register them on the Patient Desk first.</div>}
+      </div>
+
+      <h3>2. Pick an available doctor ({available.length} of {doctors.length} available)</h3>
+      <div className="cols" style={{ alignItems: 'stretch' }}>
+        {doctors.map(d => (
+          <div key={d.id} className="card" style={{ margin: 0 }}>
+            <div className="row" style={{ flexWrap: 'nowrap', alignItems: 'flex-start', gap: 14 }}>
+              <div className="avatar" style={{ width: 48, height: 48 }}>{d.fullName.split(' ').filter((w: string) => /^\p{L}/u.test(w) && !w.endsWith('.')).map((w: string) => w[0]).slice(0, 2).join('')}</div>
+              <div style={{ flex: 1, minWidth: 0 }}><h3 style={{ margin: 0 }}>{d.fullName}</h3><div className="muted">{d.specialty ?? 'Doctor'} · {d.activeVisits} active</div></div>
+              <Badge kind={d.availability}>{d.availability.replace('_', ' ')}</Badge>
+            </div>
+            <button style={{ marginTop: 12 }} disabled={d.availability !== 'AVAILABLE' || !patientId || reason.trim().length < 3} onClick={() => assign(d)}>
+              <Icon n="person_add" />{d.availability === 'AVAILABLE' ? 'Assign patient' : 'Not available'}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <h3 style={{ marginTop: 24 }}>Visit queue ({queue.length})</h3>
+      {queue.length === 0 && <div className="help">No active visits.</div>}
+      <div className="cols" style={{ alignItems: 'stretch' }}>
+        {queue.map(v => (
+          <VisitCard key={v.id} v={v} actions={<>
+            {v.status === 'WAITING' && <select aria-label="Reassign" style={{ width: 'auto', margin: 0 }} value="" onChange={e => e.target.value && act(api.call('PATCH', `/hospital/visits/${v.id}`, { doctorId: e.target.value }), 'Reassigned')}>
+              <option value="">Reassign to…</option>
+              {available.filter(d => d.id !== v.doctor.id).map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+            </select>}
+            {v.status === 'WAITING' && <button className="danger" onClick={() => { if (confirm(`Cancel the visit for ${v.patient.name}?`)) act(api.call('POST', `/hospital/visits/${v.id}/cancel`), 'Visit cancelled') }}>Cancel</button>}
+            {known.has(v.patient.id) && <button className="ghost" onClick={() => onOpen([{ scanId: '', patientId: v.patient.id, name: v.patient.name, age: v.patient.age }])}><Icon n="open_in_new" />Open file</button>}
+          </>} />
+        ))}
+      </div>
+      {recent.length > 0 && <><h3 style={{ marginTop: 24 }}>Finished in the last 24 hours</h3>
+        <div className="cols" style={{ alignItems: 'stretch' }}>{recent.map(v => <VisitCard key={v.id} v={v} />)}</div></>}
+    </>
   )
 }
 

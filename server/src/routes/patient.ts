@@ -181,6 +181,15 @@ patientRouter.post('/consents/:id/revoke', async (req, res) => {
   res.json({ ok: true })
 })
 
+// ---- visits: which doctor the patient was sent to
+patientRouter.get('/visits', async (req, res) => {
+  const rows = await prisma.visit.findMany({
+    where: { patientId: me(req).id }, orderBy: { createdAt: 'desc' }, take: 10,
+    include: { doctor: { select: { fullName: true, specialty: true } }, hospital: { select: { name: true } } },
+  })
+  res.json(rows.map(v => ({ id: v.id, status: v.status, reason: v.reason, createdAt: v.createdAt, arrivedAt: v.arrivedAt, doctor: { name: v.doctor.fullName, specialty: v.doctor.specialty }, hospital: v.hospital.name })))
+})
+
 // ---- reminders and access history
 patientRouter.get('/reminders', async (req, res) => {
   await prisma.followUpReminder.updateMany({ where: { patientId: me(req).id, status: 'UPCOMING', followUpDate: { lt: new Date(new Date().toDateString()) } }, data: { status: 'MISSED' } })

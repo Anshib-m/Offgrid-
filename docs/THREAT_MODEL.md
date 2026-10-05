@@ -36,7 +36,8 @@ Patient, hospital reception staff, doctor, a hospital acting outside its consent
 | 13 | Malicious file upload | Only PDF, PNG and JPEG, 5 MB limit. Stored under random names outside the web root. Served only through authorized endpoints. Profile photos must be images | No virus scanning |
 | 14 | Data exposure at rest | Clinical notes encrypted with AES-256-GCM. Signing keys encrypted. Passwords hashed | Uploaded files are not encrypted. Keys come from environment variables |
 | 15 | Hospital keeps a patient after discharge | Patient can revoke any time. A hospital can end its own access. Consents expire automatically | None |
-| 16 | PII leaking through logs or errors | 500 errors return a generic message. Audit log stores no names | Dev server logs may print stack traces |
+| 16 | Patient is sent to or examined by the wrong doctor, or a consultation is started without the patient present | Reception assigns only an available doctor of the same hospital. A consultation starts only when that doctor scans the patient's live one-time QR. A QR for someone not assigned to the scanning doctor is refused and not spent. Every assignment, start and completion is audited | A doctor could still scan a patient who is physically elsewhere if shown the QR |
+| 17 | PII leaking through logs or errors | 500 errors return a generic message. Audit log stores no names | Dev server logs may print stack traces |
 
 ## Human oversight of consequential actions
 

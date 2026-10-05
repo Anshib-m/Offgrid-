@@ -137,3 +137,7 @@ img.avatar { object-fit:cover; background:var(--high); display:block }
 .ptabsrow { display:flex; gap:10px; align-items:flex-start; margin-bottom:14px } .ptabsrow .ptabs { flex:1; min-width:0; margin:0 }
 .addtab { flex:none; min-height:48px; background:var(--high); color:var(--text); border:1px dashed var(--primary-c); padding:.4em 1em } .addtab[aria-expanded=true] { background:rgba(16,185,129,.12) }
 @media (max-width:700px){ .ptabsrow { flex-direction:column; align-items:stretch } }
+
+.badge.waiting,.badge.busy { background:rgba(245,158,11,.15); color:var(--amber) }
+.badge.in_consult,.badge.available { background:rgba(16,185,129,.15); color:var(--ok) }
+.badge.off_duty { background:rgba(100,116,139,.2); color:#94a3b8 }

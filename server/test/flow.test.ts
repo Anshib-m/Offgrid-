@@ -88,6 +88,38 @@ test('consent, verification, provenance, emergency', async () => {
   assert.equal((await call('DELETE', `/hospital/follow-ups/${fu.body.id}`, deskB)).status, 200)
   assert.ok(!(await call('GET', '/patient/reminders', patient)).body.some((r: any) => r.id === fu.body.id), 'gone for the patient too')
 
+  // visits: reception assigns an available doctor, the doctor's arrival scan starts the consultation
+  for (const v of (await call('GET', '/hospital/visits', deskB)).body.filter((v: any) => v.patient.id === scan.patientId && ['WAITING', 'IN_CONSULT'].includes(v.status))) {
+    if (v.status === 'WAITING') await call('POST', `/hospital/visits/${v.id}/cancel`, deskB)
+    else await call('POST', `/hospital/visits/${v.id}/complete`, docB) // leftovers from an aborted earlier run
+  }
+  const mehta = (await call('GET', '/hospital/doctors', deskB)).body.find((d: any) => d.fullName.includes('Mehta'))
+  assert.equal(mehta.availability, 'AVAILABLE')
+  const visit = await call('POST', '/hospital/visits', deskB, { patientId: scan.patientId, doctorId: mehta.id, reason: 'Chest pain review' })
+  assert.equal(visit.status, 201); assert.equal(visit.body.status, 'WAITING')
+  assert.equal((await call('POST', '/hospital/visits', deskB, { patientId: scan.patientId, doctorId: mehta.id, reason: 'again' })).status, 409, 'one active visit per patient')
+  await call('PATCH', '/hospital/me/availability', docB, { status: 'BUSY' })
+  const busy = await call('POST', '/hospital/visits', deskB, { patientId: scan.patientId, doctorId: mehta.id, reason: 'while busy' })
+  assert.equal(busy.status, 409); assert.match(busy.body.error, /not available/, 'busy doctors cannot be assigned')
+  await call('PATCH', '/hospital/me/availability', docB, { status: 'AVAILABLE' })
+  assert.equal((await call('PATCH', '/hospital/me/availability', deskB, { status: 'BUSY' })).status, 401, 'reception has no availability')
+  assert.equal((await call('POST', '/hospital/visits', docA, { patientId: scan.patientId, doctorId: mehta.id, reason: 'other hospital' })).status, 404, 'a doctor of another hospital cannot be assigned')
+
+  const arrQr = (await call('POST', '/patient/qr', patient)).body.token
+  assert.equal((await call('POST', '/hospital/visits/arrive', deskB, { token: arrQr })).status, 401, 'only doctors scan on arrival')
+  assert.equal((await call('POST', '/hospital/visits/arrive', docA, { token: arrQr })).status, 403, 'doctor not assigned to this patient')
+  const arrived = await call('POST', '/hospital/visits/arrive', docB, { token: arrQr })
+  assert.equal(arrived.status, 200, 'wrong doctor did not spend the QR'); assert.equal(arrived.body.name, 'Asha Verma'); assert.equal(arrived.body.visit.status, 'IN_CONSULT')
+  assert.equal((await call('POST', '/hospital/visits/arrive', docB, { token: arrQr })).status, 410, 'QR is single use')
+  assert.equal((await call('GET', '/patient/visits', patient)).body[0].status, 'IN_CONSULT')
+  assert.equal((await call('POST', `/hospital/visits/${visit.body.id}/complete`, deskB)).status, 401)
+  assert.equal((await call('POST', `/hospital/visits/${visit.body.id}/complete`, docA)).status, 409, 'not their visit')
+  assert.equal((await call('POST', `/hospital/visits/${visit.body.id}/complete`, docB)).status, 200)
+  assert.equal((await call('POST', `/hospital/visits/${visit.body.id}/complete`, docB)).status, 409, 'already completed')
+  const v2 = await call('POST', '/hospital/visits', deskB, { patientId: scan.patientId, doctorId: mehta.id, reason: 'Wrong patient picked' })
+  assert.equal((await call('POST', `/hospital/visits/${v2.body.id}/cancel`, deskB)).status, 200)
+  assert.equal((await call('POST', `/hospital/visits/${v2.body.id}/cancel`, deskB)).status, 404)
+
   // revoke ends access immediately
   const consents = (await call('GET', '/patient/consents', patient)).body
   const active = consents.find((c: any) => !c.revokedAt && c.hospital?.startsWith('Riverside'))

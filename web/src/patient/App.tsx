@@ -93,6 +93,7 @@ function Main() {
     reminders: () => { loadRem(); toast('📅 New follow-up reminder') },
     emergency: () => setEmergency(true),
     consents: () => { loadReq(); toast('A hospital ended its access to your records') },
+    visit: () => toast('Your visit was updated. Check the Home screen.'),
   })
   const pending = requests.filter(r => r.status === 'PENDING')
 
@@ -129,7 +130,7 @@ const daysLeft = (d: string) => Math.ceil((+new Date(d) - Date.now()) / 86_400_0
 const ACTION_LABEL: Record<string, string> = {
   PHOTO_READ: 'viewed your profile photo', ACCESS_RELINQUISHED: 'ended its access to your records', PASSWORD_RESET: 'reset your password', RECORD_DELETED: 'deleted a record', DOB_CHANGED: 'changed your date of birth', PATIENT_REGISTERED: 'registered you',
   QR_SCANNED: 'scanned your QR', ACCESS_REQUESTED: 'requested access', CONSENT_GRANTED: 'access approved', CONSENT_DENIED: 'request denied', CONSENT_REVOKED: 'access revoked',
-  RECORDS_READ: 'viewed your records', RECORD_CREATED: 'added a record', RECORD_VERIFIED: 'verified a record', DISCHARGED: 'discharged you', FOLLOWUP_CREATED: 'set a follow-up', FOLLOWUP_DELETED: 'removed a follow-up', DOCUMENT_READ: 'opened a document',
+  RECORDS_READ: 'viewed your records', RECORD_CREATED: 'added a record', RECORD_VERIFIED: 'verified a record', DISCHARGED: 'discharged you', FOLLOWUP_CREATED: 'set a follow-up', FOLLOWUP_DELETED: 'removed a follow-up', VISIT_ASSIGNED: 'assigned you to a doctor', VISIT_REASSIGNED: 'changed your doctor', VISIT_CANCELLED: 'cancelled your visit', VISIT_STARTED: 'started your consultation', VISIT_COMPLETED: 'completed your visit', DOCUMENT_READ: 'opened a document',
 }
 const actionLabel = (a: string) => (a.startsWith('EMERGENCY_ACCESS') ? 'used your emergency card' : ACTION_LABEL[a] ?? a.toLowerCase().replace(/_/g, ' '))
 
@@ -140,7 +141,9 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
   const [consents, setConsents] = useState<any[]>([])
   const [cards, setCards] = useState<any[] | null>(null)
   const [hist, setHist] = useState<any[]>([])
+  const [visits, setVisits] = useState<any[]>([])
   const load = useCallback(() => {
+    api.call('GET', '/patient/visits').then(setVisits).catch(() => {})
     api.call('GET', '/patient/me').then(setMe).catch(() => {})
     api.call('GET', '/patient/consents').then(setConsents).catch(() => {})
     api.call('GET', '/patient/emergency-cards').then(setCards).catch(() => {})
@@ -165,6 +168,17 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
       <div className="row"><h1>{me ? `Hi, ${me.firstName}` : 'Welcome'}</h1><span className="pill"><span className="dot" />Private</span></div>
 
       {pending > 0 && <div className="card todo row"><b>{pending} hospital{pending > 1 ? 's are' : ' is'} waiting for your answer</b><button onClick={() => go('Requests')}>Review</button></div>}
+
+      {visits.filter(v => v.status === 'WAITING' || v.status === 'IN_CONSULT').map(v => (
+        <div key={v.id} className="card todo">
+          <div className="row"><h3 style={{ margin: 0 }}><Icon n="assignment_ind" style={{ color: 'var(--primary)' }} /> Your visit</h3><Badge kind={v.status}>{v.status === 'WAITING' ? 'WAITING' : 'IN CONSULTATION'}</Badge></div>
+          <p style={{ margin: '8px 0 2px' }}><b>{v.doctor.name}</b>{v.doctor.specialty ? ` · ${v.doctor.specialty}` : ''}</p>
+          <div className="muted">{v.hospital} · {v.reason}</div>
+          {v.status === 'WAITING'
+            ? <div className="help" style={{ marginTop: 10, marginBottom: 0 }}>Go to the doctor and show your QR when you arrive. The doctor scans it to start your consultation.</div>
+            : <div className="mono" style={{ marginTop: 8 }}>Started {fmtTime(v.arrivedAt)}</div>}
+        </div>
+      ))}
 
       <div className="card center">
         {qr ? <>

@@ -25,7 +25,7 @@ hospitalRouter.get('/events', auth(['DOCTOR', 'STAFF'], true), (req, res) => {
 hospitalRouter.use(auth(['DOCTOR', 'STAFF']))
 
 hospitalRouter.get('/me', async (req, res) => {
-  const s = await prisma.staff.findUniqueOrThrow({ where: { id: me(req).id }, select: { id: true, fullName: true, role: true, specialty: true, hospital: { select: { id: true, name: true } } } })
+  const s = await prisma.staff.findUniqueOrThrow({ where: { id: me(req).id }, select: { id: true, fullName: true, role: true, specialty: true, availability: true, hospital: { select: { id: true, name: true } } } })
   res.json(s)
 })
 
@@ -285,6 +285,115 @@ hospitalRouter.delete('/follow-ups/:id', async (req, res) => {
   await prisma.followUpReminder.delete({ where: { id: r.id } })
   await audit(r.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'FOLLOWUP_DELETED', purpose: r.reason })
   emit(`patient:${r.patientId}`, 'reminders', {})
+  res.json({ ok: true })
+})
+
+// ---- doctors, availability and visit assignments
+const ACTIVE = ['WAITING', 'IN_CONSULT'] as const
+const visitInclude = { patient: { select: { id: true, firstName: true, lastName: true, dob: true } }, doctor: { select: { id: true, fullName: true, specialty: true } } }
+type VisitRow = Awaited<ReturnType<typeof prisma.visit.findFirstOrThrow<{ include: typeof visitInclude }>>>
+const ageOf = (d: Date) => Math.floor((Date.now() - d.getTime()) / 31_557_600_000)
+const shapeVisit = (v: VisitRow) => ({
+  id: v.id, status: v.status, reason: v.reason, createdAt: v.createdAt, arrivedAt: v.arrivedAt, completedAt: v.completedAt,
+  patient: { id: v.patient.id, name: `${v.patient.firstName} ${v.patient.lastName}`, age: ageOf(v.patient.dob) },
+  doctor: { id: v.doctor.id, name: v.doctor.fullName, specialty: v.doctor.specialty },
+})
+const visitEvents = (hospitalId: string, patientId: string) => { emit(`patient:${patientId}`, 'visit', {}); emit(`hospital:${hospitalId}`, 'visit', {}) }
+
+hospitalRouter.get('/doctors', async (req, res) => {
+  const docs = await prisma.staff.findMany({ where: { hospitalId: hid(req), role: 'DOCTOR' }, select: { id: true, fullName: true, specialty: true, availability: true }, orderBy: { fullName: 'asc' } })
+  const load = await prisma.visit.groupBy({ by: ['doctorId'], where: { hospitalId: hid(req), status: { in: [...ACTIVE] } }, _count: true })
+  res.json(docs.map(d => ({ ...d, activeVisits: load.find(l => l.doctorId === d.id)?._count ?? 0 })))
+})
+
+hospitalRouter.patch('/me/availability', auth(['DOCTOR']), async (req, res) => {
+  const { status } = parse(z.object({ status: z.enum(['AVAILABLE', 'BUSY', 'OFF_DUTY']) }), req.body)
+  await prisma.staff.update({ where: { id: me(req).id }, data: { availability: status } })
+  emit(`hospital:${hid(req)}`, 'visit', {})
+  res.json({ availability: status })
+})
+
+// Reception (or a doctor) assigns an available doctor to a patient the hospital already knows.
+hospitalRouter.post('/visits', async (req, res) => {
+  const b = parse(z.object({ patientId: z.string().uuid(), doctorId: z.string().uuid(), reason: z.string().trim().min(3).max(300) }), req.body)
+  const hospitalId = hid(req)
+  const known = (await activeConsents(b.patientId, hospitalId)).length > 0
+    || !!(await prisma.scan.findFirst({ where: { patientId: b.patientId, hospitalId, createdAt: { gt: new Date(Date.now() - 60 * 60_000) } }, select: { id: true } }))
+  if (!known) throw new HttpError(403, 'scan the patient QR or get their approval first')
+  const doc = await prisma.staff.findFirst({ where: { id: b.doctorId, hospitalId, role: 'DOCTOR' } })
+  if (!doc) throw new HttpError(404, 'doctor not found')
+  if (doc.availability !== 'AVAILABLE') throw new HttpError(409, `${doc.fullName} is not available right now`)
+  const dup = await prisma.visit.findFirst({ where: { patientId: b.patientId, hospitalId, status: { in: [...ACTIVE] } }, include: { doctor: { select: { fullName: true } } } })
+  if (dup) throw new HttpError(409, `patient already has an active visit with ${dup.doctor.fullName}`)
+  const v = await prisma.visit.create({ data: { hospitalId, patientId: b.patientId, doctorId: doc.id, assignedById: me(req).id, reason: b.reason }, include: visitInclude })
+  await audit(b.patientId, { hospitalId, staffId: me(req).id, action: 'VISIT_ASSIGNED', purpose: b.reason })
+  visitEvents(hospitalId, b.patientId)
+  res.status(201).json(shapeVisit(v))
+})
+
+// Queue: active visits plus anything finished in the last 24 hours. ?mine=1 limits to the signed-in doctor.
+hospitalRouter.get('/visits', async (req, res) => {
+  const since = new Date(Date.now() - 24 * 3_600_000)
+  const rows = await prisma.visit.findMany({
+    where: {
+      hospitalId: hid(req), ...(req.query.mine ? { doctorId: me(req).id } : {}),
+      OR: [{ status: { in: [...ACTIVE] } }, { createdAt: { gt: since } }],
+    },
+    include: visitInclude, orderBy: { createdAt: 'asc' },
+  })
+  res.json(rows.map(shapeVisit))
+})
+
+hospitalRouter.patch('/visits/:id', async (req, res) => {
+  const { doctorId } = parse(z.object({ doctorId: z.string().uuid() }), req.body)
+  const v = await prisma.visit.findFirst({ where: { id: String(req.params.id), hospitalId: hid(req), status: 'WAITING' } })
+  if (!v) throw new HttpError(404, 'waiting visit not found')
+  const doc = await prisma.staff.findFirst({ where: { id: doctorId, hospitalId: hid(req), role: 'DOCTOR' } })
+  if (!doc) throw new HttpError(404, 'doctor not found')
+  if (doc.availability !== 'AVAILABLE') throw new HttpError(409, `${doc.fullName} is not available right now`)
+  const upd = await prisma.visit.update({ where: { id: v.id }, data: { doctorId: doc.id, assignedById: me(req).id }, include: visitInclude })
+  await audit(v.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'VISIT_REASSIGNED', purpose: v.reason })
+  visitEvents(hid(req), v.patientId)
+  res.json(shapeVisit(upd))
+})
+
+hospitalRouter.post('/visits/:id/cancel', async (req, res) => {
+  const v = await prisma.visit.findFirst({ where: { id: String(req.params.id), hospitalId: hid(req), status: 'WAITING' } })
+  if (!v) throw new HttpError(404, 'waiting visit not found')
+  await prisma.visit.update({ where: { id: v.id }, data: { status: 'CANCELLED', completedAt: new Date() } })
+  await audit(v.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'VISIT_CANCELLED', purpose: v.reason })
+  visitEvents(hid(req), v.patientId)
+  res.json({ ok: true })
+})
+
+// Arrival: the assigned doctor scans the patient's QR again. Starts the consultation and opens the patient's file.
+hospitalRouter.post('/visits/arrive', auth(['DOCTOR']), async (req, res) => {
+  const { token } = parse(z.object({ token: z.string().min(10).max(200) }), req.body)
+  const hospitalId = hid(req), doctorId = me(req).id
+  const idt = await prisma.identityToken.findFirst({ where: { nonce: token, usedAt: null, expiresAt: { gt: new Date() } }, include: { patient: true } })
+  if (!idt) throw new HttpError(410, 'QR invalid, expired or already used')
+  // The QR is only spent when it matches a visit assigned to this doctor.
+  const visit = await prisma.visit.findFirst({ where: { patientId: idt.patientId, hospitalId, doctorId, status: { in: [...ACTIVE] } }, orderBy: { createdAt: 'desc' } })
+  if (!visit) throw new HttpError(403, 'This patient is not assigned to you')
+  const spent = await prisma.identityToken.updateMany({ where: { nonce: token, usedAt: null }, data: { usedAt: new Date() } })
+  if (spent.count !== 1) throw new HttpError(410, 'QR invalid, expired or already used')
+  const out = await prisma.$transaction(async tx => {
+    const v = await tx.visit.update({ where: { id: visit.id }, data: { status: 'IN_CONSULT', arrivedAt: visit.arrivedAt ?? new Date() }, include: visitInclude })
+    const scan = await tx.scan.create({ data: { patientId: idt.patientId, hospitalId, staffId: doctorId } })
+    await audit(idt.patientId, { hospitalId, staffId: doctorId, action: 'QR_SCANNED', purpose: 'consultation arrival' }, tx)
+    if (visit.status === 'WAITING') await audit(idt.patientId, { hospitalId, staffId: doctorId, action: 'VISIT_STARTED', purpose: visit.reason }, tx)
+    return { v, scan }
+  })
+  visitEvents(hospitalId, idt.patientId)
+  res.json({ scanId: out.scan.id, patientId: idt.patientId, name: `${idt.patient.firstName} ${idt.patient.lastName}`, age: ageOf(idt.patient.dob), visit: shapeVisit(out.v) })
+})
+
+hospitalRouter.post('/visits/:id/complete', auth(['DOCTOR']), async (req, res) => {
+  const v = await prisma.visit.findFirst({ where: { id: String(req.params.id), hospitalId: hid(req), doctorId: me(req).id, status: 'IN_CONSULT' } })
+  if (!v) throw new HttpError(409, 'only your in-progress visits can be completed')
+  await prisma.visit.update({ where: { id: v.id }, data: { status: 'COMPLETED', completedAt: new Date() } })
+  await audit(v.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'VISIT_COMPLETED', purpose: v.reason })
+  visitEvents(hid(req), v.patientId)
   res.json({ ok: true })
 })
 

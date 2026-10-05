@@ -20,7 +20,7 @@ npm test          # end-to-end test against the real API and database
 
 `npx tsc` (type check) passes for both `server/` and `web/`.
 
-The single test (`server/test/flow.test.ts`) walks the whole patient journey and contains **59 assertions**. It is intentionally one long scenario because each step depends on the previous one.
+The single test (`server/test/flow.test.ts`) walks the whole patient journey and contains **76 assertions**. It is intentionally one long scenario because each step depends on the previous one.
 
 ## Security and behaviour test cases
 
@@ -62,6 +62,16 @@ The single test (`server/test/flow.test.ts`) walks the whole patient journey and
 | Password reset | 5 wrong guesses, then the right date | 429 (locked) |
 | Follow-ups | Another hospital deletes a follow-up | 404 |
 | Follow-ups | Creating hospital deletes it | 200, and it disappears for the patient |
+| Visits | Reception assigns an available doctor | 201, status WAITING |
+| Visits | Second active visit for the same patient | 409 |
+| Visits | Assign a busy doctor | 409 "not available" |
+| Visits | Assign a doctor of another hospital | 404 |
+| Visits | Reception changes doctor availability | 401 |
+| Visits | Reception or a doctor not assigned scans the arrival QR | 401 / 403, QR not spent |
+| Visits | Assigned doctor scans the arrival QR | 200, IN_CONSULT, patient name returned |
+| Visits | Reuse of the arrival QR | 410 |
+| Visits | Complete: reception, wrong doctor, correct doctor, twice | 401, 409, 200, 409 |
+| Visits | Cancel a waiting visit, then again | 200, 404 |
 | Emergency | Valid card plus reason | Critical fields only, no records |
 | Emergency | Use is audited | Appears in the patient's access history |
 | Emergency | Invalid card code | 404 |

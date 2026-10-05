@@ -7,8 +7,8 @@
 | **Project name** | Offgrid |
 | **Team name** | Offgrid |
 | **Event** | ASTRA 2026, Cyber in Healthcare |
-| **Selected track** | `TODO: selected track` |
-| **Challenge** | `TODO: challenge number and title` |
+| **Selected track** | Cyber in Healthcare |
+| **Challenge** | Challenge 4: `TODO: challenge title` |
 | **License** | [MIT](LICENSE) |
 | **Final version for judging** | `TODO: tag / release / commit, set before the deadline` |
 
@@ -45,6 +45,8 @@ A consent-first data exchange between patients and hospitals:
 - Scan or paste the QR. Request exactly the categories needed ("Select all" available).
 - Active Patients page, several patients open as tabs, the hospital can end its own access.
 - Add records, upload reports, doctor verify-and-sign, discharge with prescription and follow-up reminder.
+- **Doctors & Assignments** page for reception and doctors: see which doctors are available, assign a patient and a reason to one. Doctors have their own **My Patients** page: an availability switch (Available / Busy / Off duty), their queue, and the arrival scan.
+- **Arrival QR:** when the patient reaches the doctor, the doctor scans the patient's QR again. That starts the consultation and opens the patient's file with the reason for the visit. The patient app shows which doctor to go to.
 - Emergency break-glass access and a hospital audit trail.
 
 **Security**: consent engine, Ed25519 record signatures, immutable verified records, pseudonymous append-only audit log, AES-256-GCM encryption of clinical notes, bcrypt, input validation, rate-limited password reset. Details in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
@@ -128,7 +130,9 @@ Optional native apps: see [Native patient apps](#native-patient-apps-optional).
 2. Open the hospital portal in another tab, sign in as reception or a doctor, and paste the QR code on the Patient Desk.
 3. Request the data you need. The patient approves on their phone.
 4. Work on the patient (records, uploads, verify and sign, discharge, follow-ups). Several patients can stay open as tabs.
-5. Either side can end access at any time.
+5. Reception opens **Doctors & Assignments**, picks the patient and a reason, and assigns an available doctor. The patient app shows "Your visit" with the doctor's name.
+6. When the patient reaches the doctor, the doctor opens **My Patients** and scans the patient's QR. The consultation starts and the patient's file opens.
+7. Either side can end access at any time.
 
 ### Demo accounts
 
@@ -152,7 +156,7 @@ Use two browser tabs: the patient app in a phone-sized window, the hospital port
 4. The patient app notifies live. Requests: untick Lab, **Approve** for 1 hour.
 5. Hospital B, Records: only Surgery and Medication, only from Hospital A. The consult and Lab stay hidden.
 6. Hospital B adds a record. It stays UNVERIFIED until Dr. Mehta uses **Verify & Sign**.
-7. Dr. Rao (Hospital A), Discharge: signed summary and prescription, and the follow-up reaches the patient.
+7. Hospital A reception, Doctors & Assignments: assign the patient to Dr. Rao with a reason. The patient app shows "Your visit". Dr. Rao, My Patients: scan the patient's QR on arrival. The file opens with the visit reason. Discharge: signed summary and prescription, and the follow-up reaches the patient.
 8. Hospital B, Active Patients: the patient is listed. The patient taps **Revoke** (or the hospital does) and the patient drops off the list. Access history shows every event.
 9. Hospital, Emergency: card code plus a reason shows critical fields only. The patient is notified.
 
@@ -160,7 +164,7 @@ Seeded data lives at Hospital A: signed surgery, lab, medication and discharge r
 
 ## Testing and evaluation results
 
-`npm test` runs an end-to-end scenario with **59 assertions** against the real API and PostgreSQL. **Latest result: 1 test, 1 pass, 0 fail.** Type checks (`tsc`) pass for the API and the web apps.
+`npm test` runs an end-to-end scenario with **76 assertions** against the real API and PostgreSQL. **Latest result: 1 test, 1 pass, 0 fail.** Type checks (`tsc`) pass for the API and the web apps.
 
 It covers authentication and authorization, QR single use, consent checks (including narrowing, revoking and hospital-ended access), record verification and signatures, deletion rules, profile photo rules, date-of-birth changes, password reset with lockout, emergency access and audit visibility.
 
@@ -171,6 +175,7 @@ Full case table, reproduction steps, screenshots and the limits of this testing:
 - **No real data.** Everything is synthetic (see Safety). No secrets are committed: `.env` is git-ignored and only placeholder `.env.example` files are tracked.
 - QR holds an opaque one-time nonce (5 minutes). A scan, or existing active consent, is required before a request.
 - Read path: valid, unexpired, unrevoked consent **and** category match **and** source-hospital match.
+- Only the assigned doctor's scan can start a consultation. A QR for a patient who is not assigned to that doctor is refused and is not used up.
 - Verified records are immutable (database trigger) and cannot be deleted. The audit log is append-only (database trigger).
 - Audit entries use `HMAC-SHA256(patientId, pepper)`. This is **pseudonymization**, not anonymization. Hashing alone is not treated as anonymous.
 - Threats, mitigations and residual risks: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).

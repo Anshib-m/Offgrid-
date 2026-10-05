@@ -50,6 +50,19 @@ enum ReminderStatus {
   CANCELLED
 }
 
+enum DoctorStatus {
+  AVAILABLE
+  BUSY
+  OFF_DUTY
+}
+
+enum VisitStatus {
+  WAITING
+  IN_CONSULT
+  COMPLETED
+  CANCELLED
+}
+
 enum CardKind {
   CARD
   FAMILY
@@ -67,6 +80,7 @@ model Hospital {
   requestsMade   AccessRequest[]    @relation("requesting")
   requestsSource AccessRequest[]    @relation("source")
   reminders      FollowUpReminder[]
+  visits         Visit[]
 }
 
 // Doctors and other hospital users. Only DOCTOR rows hold signing keys.
@@ -85,6 +99,9 @@ model Staff {
   createdAt      DateTime             @default(now())
   createdRecords MedicalRecord[]
   verifications  RecordVerification[]
+  availability   DoctorStatus         @default(AVAILABLE) // only meaningful for doctors
+  visitsAsDoctor Visit[]              @relation("doctorVisits")
+  visitsAssigned Visit[]              @relation("assignedVisits")
 }
 
 model Patient {
@@ -108,6 +125,7 @@ model Patient {
   emergencyCards        EmergencyCard[]
   records               MedicalRecord[]
   accessRequests        AccessRequest[]
+  visits                Visit[]
 }
 
 // Short-lived opaque QR/NFC token. Carries no patient data.
@@ -278,4 +296,26 @@ model AuditLog {
 
   @@index([patientRef, createdAt])
   @@index([hospitalId, createdAt])
+}
+
+// A patient assigned by reception to a doctor. The doctor's arrival scan moves it WAITING -> IN_CONSULT.
+model Visit {
+  id           String      @id @default(uuid()) @db.Uuid
+  hospitalId   String      @db.Uuid
+  hospital     Hospital    @relation(fields: [hospitalId], references: [id])
+  patientId    String      @db.Uuid
+  patient      Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId     String      @db.Uuid
+  doctor       Staff       @relation("doctorVisits", fields: [doctorId], references: [id])
+  assignedById String      @db.Uuid
+  assignedBy   Staff       @relation("assignedVisits", fields: [assignedById], references: [id])
+  reason       String
+  status       VisitStatus @default(WAITING)
+  createdAt    DateTime    @default(now())
+  arrivedAt    DateTime?
+  completedAt  DateTime?
+
+  @@index([hospitalId, status])
+  @@index([doctorId, status])
+  @@index([patientId, status])
 }
