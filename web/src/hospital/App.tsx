@@ -31,6 +31,7 @@ function Login({ onDone }: { onDone: () => void }) {
 }
 
 const NAV = ['Patient desk', 'Requests', 'Emergency', 'Audit log'] as const
+const NAV_ICON = { 'Patient desk': '🧑‍⚕️', Requests: '📨', Emergency: '🚨', 'Audit log': '📜' }
 
 function Shell() {
   const [me, setMe] = useState<Me | null>(null)
@@ -47,9 +48,9 @@ function Shell() {
       {toastEl}
       <aside className="side">
         <b>🏥 {me.hospital.name}</b>
-        <div className="muted" style={{ color: '#9fbcb8' }}>{me.fullName} · {me.role}</div>
-        <hr style={{ width: '100%', borderColor: '#2d5551' }} />
-        {NAV.map(n => <button key={n} className={page === n ? 'on' : ''} onClick={() => setPage(n)}>{n}</button>)}
+        <div className="muted">{me.fullName} · {me.role}</div>
+        <hr />
+        {NAV.map(n => <button key={n} className={page === n ? 'on' : ''} onClick={() => setPage(n)}>{NAV_ICON[n]} {n}</button>)}
         <button style={{ marginTop: 'auto' }} onClick={api.logout}>Sign out</button>
       </aside>
       <main className="main">
@@ -86,14 +87,14 @@ function Desk({ me, patient, setPatient, tick, toast }: { me: Me; patient: Patie
       <h1>Patient desk</h1>
       <div className="cols">
         <div className="card">
-          <h3>Scan patient QR / NFC</h3>
+          <h3>① Identify the patient</h3>
           {scanning ? <><Scanner onScan={scan} /><button className="ghost" onClick={() => setScanning(false)}>Stop camera</button></> : <button onClick={() => setScanning(true)}>Open camera</button>}
-          <p className="muted">No camera? Paste the code from the patient app:</p>
+          <p className="muted">No camera? Type or paste the code shown in the patient app:</p>
           <input value={token} onChange={e => setToken(e.target.value)} placeholder="offgrid:id:..." />
           <button disabled={!token} onClick={() => scan(token)}>Identify patient</button>
         </div>
         <div className="card">
-          <h3>New patient (walk-in)</h3>
+          <h3>Or register a new patient</h3>
           {!reg ? <button className="ghost" onClick={() => setReg(true)}>Register patient</button> : (
             <form onSubmit={register}>
               <label>First name<input name="firstName" required /></label><label>Last name<input name="lastName" required /></label>
@@ -102,9 +103,10 @@ function Desk({ me, patient, setPatient, tick, toast }: { me: Me; patient: Patie
               <button>Register</button>
             </form>
           )}
-          {created && <div className="alert" style={{ background: '#dcfce7', borderColor: '#86efac' }}>Account created for {created.email}. One-time password: <b>{created.pw}</b>. Give it to the patient now.</div>}
+          {created && <div className="alert ok">Account created for {created.email}. One-time password: <b>{created.pw}</b>. Give it to the patient now.</div>}
         </div>
       </div>
+      {!patient && <div className="help" style={{ marginTop: 12 }}>Start here: scan the patient's QR, or register a walk-in. Then request access to their records.</div>}
       {patient && <Workspace key={patient.patientId} me={me} patient={patient} tick={tick} toast={toast} close={() => setPatient(null)} />}
     </>
   )
@@ -315,7 +317,7 @@ function Emergency({ toast }: { toast: Toast }) {
         <button className="danger" disabled={code.length < 10 || reason.length < 5} onClick={() => guard(toast, async () => setGrant(await api.call('POST', '/hospital/emergency', { code: stripPrefix(code), reason })))}>Break glass</button>
       </div>
       {p && (
-        <div className="card" style={{ maxWidth: 520, borderColor: '#b91c1c' }}>
+        <div className="card" style={{ maxWidth: 520, borderColor: 'var(--bad)' }}>
           <h2>{p.name}</h2>
           <p><b>Blood group:</b> {p.bloodGroup ?? 'unknown'}<br /><b>Severe allergies:</b> {p.allergies ?? 'none recorded'}<br /><b>Chronic conditions:</b> {p.chronicConditions ?? 'none recorded'}<br /><b>Emergency contact:</b> {p.emergencyContactName} {p.emergencyContactPhone}</p>
           <div className="muted">Access expires {fmtTime(grant.expiresAt)}. Full history is not available.</div>

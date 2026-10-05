@@ -5,6 +5,7 @@ import { Badge, catLabel, fmtDate, fmtTime, guard, QR, RecordCard, RECORD_CATS, 
 const api = createApi('og_patient')
 type Toast = (t: string, e?: boolean) => void
 const TABS = ['Home', 'Requests', 'Records', 'Follow-ups', 'Me'] as const
+const ICON: Record<string, string> = { Home: '🏠', Requests: '🔔', Records: '📋', 'Follow-ups': '📅', Me: '👤' }
 
 export function App() {
   const [authed, setAuthed] = useState(!!api.token())
@@ -74,7 +75,7 @@ function Main() {
       <nav className="tabs">
         {TABS.map(t => (
           <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-            {t}{t === 'Requests' && pending.length > 0 && <span className="dot">{pending.length}</span>}
+            <span className="ico">{ICON[t]}</span><span>{t}{t === 'Requests' && pending.length > 0 && <span className="dot">{pending.length}</span>}</span>
           </button>
         ))}
       </nav>
@@ -98,10 +99,10 @@ function Home({ pending, go, toast }: { pending: number; go: (t: any) => void; t
           <QR text={`offgrid:id:${qr.token}`} />
           <p className="muted">One-time code, valid {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}. It holds no medical data.</p>
           <p className="muted" style={{ wordBreak: 'break-all' }}>{qr.token}</p>
-        </> : <p className="muted">Show this at a hospital desk. They scan it, then ask you for approval.</p>}
-        <button onClick={() => guard(toast, async () => setQr(await api.call('POST', '/patient/qr')))}>{qr ? 'New code' : 'Show my QR'}</button>
+        </> : <div className="help"><b>How it works</b><br />1. Show this QR at the hospital desk.<br />2. They scan it and ask for your records.<br />3. You choose what to share.</div>}
+        <button className="bigbtn" onClick={() => guard(toast, async () => setQr(await api.call('POST', '/patient/qr')))}>{qr ? 'New code' : '📱 Show my QR'}</button>
       </div>
-      {pending > 0 && <div className="card row"><b>{pending} pending access request{pending > 1 ? 's' : ''}</b><button onClick={() => go('Requests')}>Review</button></div>}
+      {pending > 0 && <div className="card todo row"><b>🔔 {pending} hospital{pending > 1 ? 's are' : ' is'} waiting for your answer</b><button onClick={() => go('Requests')}>Review</button></div>}
     </>
   )
 }
@@ -112,7 +113,7 @@ function Requests({ requests, reload, toast }: { requests: any[]; reload: () => 
   return (
     <>
       <h1>Access requests</h1>
-      {pending.length === 0 && <p className="muted">Nothing waiting for you.</p>}
+      {pending.length === 0 && <div className="help">✅ Nothing waiting. When a hospital asks for your records, it appears here.</div>}
       {pending.map(r => <Pending key={r.id} r={r} reload={reload} toast={toast} />)}
       {rest.length > 0 && <h2>History</h2>}
       {rest.map(r => (
@@ -131,8 +132,8 @@ function Pending({ r, reload, toast }: { r: any; reload: () => void; toast: Toas
   const toggle = (c: string) => setSel(s => (s.includes(c) ? s.filter(x => x !== c) : [...s, c]))
   const act = (path: string, body?: object) => guard(toast, async () => { await api.call('POST', `/patient/requests/${r.id}/${path}`, body); toast(path === 'approve' ? 'Access granted' : 'Denied'); reload() })
   return (
-    <div className="card">
-      <b>{r.requestingHospital.name}</b>
+    <div className="card todo">
+      <b style={{ fontSize: '1.15rem' }}>{r.requestingHospital.name}</b>
       {r.sourceHospital ? <div className="muted">wants records held by <b>{r.sourceHospital.name}</b></div> : <div className="muted">wants access to your records</div>}
       <p>“{r.reason}”</p>
       <div>{r.categories.map((c: string) => <label key={c} className="chk"><input type="checkbox" checked={sel.includes(c)} onChange={() => toggle(c)} />{catLabel(c)}</label>)}</div>
@@ -142,8 +143,8 @@ function Pending({ r, reload, toast }: { r: any; reload: () => void; toast: Toas
         </select>
       </label>
       <div className="gap">
-        <button disabled={!sel.length} onClick={() => act('approve', { categories: sel, hours })}>Approve selected</button>
-        <button className="danger" onClick={() => act('deny')}>Deny</button>
+        <button disabled={!sel.length} onClick={() => act('approve', { categories: sel, hours })}>✓ Approve selected</button>
+        <button className="danger" onClick={() => act('deny')}>✕ Deny</button>
       </div>
     </div>
   )
