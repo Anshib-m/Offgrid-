@@ -53,6 +53,19 @@ export async function audit(
   return row.txId
 }
 
+// For high-frequency reads (auto-refreshing screens): one entry per patient+staff+action per window.
+export async function auditThrottled(
+  patientId: string,
+  e: { hospitalId?: string; staffId?: string; action: string; purpose: string },
+  windowMs = 5 * 60_000,
+) {
+  const recent = await prisma.auditLog.findFirst({
+    where: { patientRef: pseudo(patientId), staffId: e.staffId, action: e.action, createdAt: { gt: new Date(Date.now() - windowMs) } },
+    select: { id: true },
+  })
+  if (!recent) await audit(patientId, e)
+}
+
 // ---- live events (SSE). In-memory: single instance only.
 const channels = new Map<string, Set<Response>>()
 export function subscribe(channel: string, res: Response) {

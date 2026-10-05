@@ -101,6 +101,8 @@ model Patient {
   chronicConditions     String?
   emergencyContactName  String?
   emergencyContactPhone String?
+  photoRef              String? // profile photo file in the upload dir
+  photoType             String?
   createdAt             DateTime        @default(now())
   identityTokens        IdentityToken[]
   emergencyCards        EmergencyCard[]

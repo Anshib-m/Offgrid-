@@ -4,10 +4,10 @@ import { randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { z } from 'zod'
 import { Category } from '@prisma/client'
-import { audit, emit, enc, HttpError, prisma, sha256, subscribe } from '../core.js'
+import { audit, auditThrottled, emit, enc, HttpError, prisma, sha256, subscribe } from '../core.js'
 import { auth, me, parse } from '../auth.js'
 import { activeConsents, canSeeProfile, expireStale, readableWhere, requireConsent } from '../consent.js'
-import { recordInclude, shape, verifyInTx } from '../records.js'
+import { deleteUnverified, recordInclude, shape, verifyInTx } from '../records.js'
 import { docData, docPath, upload } from '../upload.js'
 
 export const hospitalRouter = Router()
@@ -47,7 +47,7 @@ hospitalRouter.post('/scan', async (req, res) => {
 
 // Patient present at the desk: account created, 24h consent recorded as desk-registration.
 hospitalRouter.post('/patients', async (req, res) => {
-  const b = parse(z.object({ email: z.string().email(), firstName: z.string().min(1), lastName: z.string().min(1), dob: z.coerce.date(), gender: z.string().min(1), phone: z.string().min(5) }), req.body)
+  const b = parse(z.object({ email: z.string().email(), firstName: z.string().min(1), lastName: z.string().min(1), dob: z.coerce.date(), gender: z.enum(['Male', 'Female', 'Other']), phone: z.string().min(5) }), req.body)
   const tempPassword = randomBytes(6).toString('base64url')
   const hospitalId = hid(req)
   const out = await prisma.$transaction(async tx => {
@@ -66,18 +66,60 @@ hospitalRouter.post('/patients', async (req, res) => {
 
 // ---- access requests
 hospitalRouter.post('/requests', async (req, res) => {
-  const b = parse(z.object({ scanId: z.string().uuid(), categories: z.array(AnyCategory).min(1), reason: z.string().min(3).max(500), sourceHospitalId: z.string().uuid().optional() }), req.body)
-  const scan = await prisma.scan.findFirst({ where: { id: b.scanId, hospitalId: hid(req), createdAt: { gt: new Date(Date.now() - 60 * 60_000) } } })
-  if (!scan) throw new HttpError(403, 'scan the patient QR first (scans last 60 min)')
+  const b = parse(z.object({
+    scanId: z.string().uuid().optional(), patientId: z.string().uuid().optional(),
+    categories: z.array(AnyCategory).min(1), reason: z.string().min(3).max(500), sourceHospitalId: z.string().uuid().optional(),
+  }), req.body)
+  // Proof of presence: a recent QR scan, or a patient who already has active access with this hospital.
+  const scan = b.scanId ? await prisma.scan.findFirst({ where: { id: b.scanId, hospitalId: hid(req), createdAt: { gt: new Date(Date.now() - 60 * 60_000) } } }) : null
+  const patientId = scan?.patientId ?? b.patientId
+  if (!patientId || (b.scanId && !scan && !b.patientId)) throw new HttpError(403, 'scan the patient QR first (scans last 60 min)')
+  if (!scan && !(await activeConsents(patientId, hid(req))).length) throw new HttpError(403, 'scan the patient QR first (scans last 60 min)')
   if (b.sourceHospitalId) {
     if (b.sourceHospitalId === hid(req) || !(await prisma.hospital.findUnique({ where: { id: b.sourceHospitalId } }))) throw new HttpError(400, 'bad source hospital')
   }
   const r = await prisma.accessRequest.create({
-    data: { patientId: scan.patientId, requestingHospitalId: hid(req), sourceHospitalId: b.sourceHospitalId, requestedBy: me(req).id, categories: b.categories as Category[], reason: b.reason, expiresAt: new Date(Date.now() + 60 * 60_000) },
+    data: { patientId, requestingHospitalId: hid(req), sourceHospitalId: b.sourceHospitalId, requestedBy: me(req).id, categories: b.categories as Category[], reason: b.reason, expiresAt: new Date(Date.now() + 60 * 60_000) },
   })
-  await audit(scan.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'ACCESS_REQUESTED', purpose: b.reason })
-  emit(`patient:${scan.patientId}`, 'request', { id: r.id })
+  await audit(patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'ACCESS_REQUESTED', purpose: b.reason })
+  emit(`patient:${patientId}`, 'request', { id: r.id })
   res.status(201).json(r)
+})
+
+// A hospital can end its own access at any time (e.g. patient left, case closed).
+hospitalRouter.post('/patients/:patientId/revoke', async (req, res) => {
+  const patientId = pid(req), hospitalId = hid(req)
+  const consents = await activeConsents(patientId, hospitalId)
+  if (!consents.length) throw new HttpError(404, 'no active access to revoke')
+  await prisma.$transaction(async tx => {
+    await tx.consent.updateMany({ where: { id: { in: consents.map(c => c.id) } }, data: { revokedAt: new Date() } })
+    await tx.accessRequest.updateMany({ where: { id: { in: consents.map(c => c.requestId) } }, data: { status: 'REVOKED' } })
+    await audit(patientId, { hospitalId, staffId: me(req).id, action: 'ACCESS_RELINQUISHED', purpose: 'hospital ended its access' }, tx)
+  })
+  emit(`patient:${patientId}`, 'consents', {})
+  res.json({ ok: true })
+})
+
+// Patients whose consent to this hospital is neither revoked nor expired.
+hospitalRouter.get('/active-patients', async (req, res) => {
+  const consents = await prisma.consent.findMany({ where: { hospitalId: hid(req), revokedAt: null, expiresAt: { gt: new Date() } }, orderBy: { grantedAt: 'desc' } })
+  const patients = await prisma.patient.findMany({
+    where: { id: { in: [...new Set(consents.map(c => c.patientId))] } },
+    select: { id: true, firstName: true, lastName: true, dob: true, photoRef: true },
+  })
+  const hospitals = new Map((await prisma.hospital.findMany({ select: { id: true, name: true } })).map(h => [h.id, h.name]))
+  res.json(patients.map(p => {
+    const mine = consents.filter(c => c.patientId === p.id)
+    return {
+      patientId: p.id, name: `${p.firstName} ${p.lastName}`,
+      age: Math.floor((Date.now() - p.dob.getTime()) / 31_557_600_000),
+      categories: [...new Set(mine.flatMap(c => c.categories))],
+      sources: [...new Set(mine.map(c => c.sourceHospitalId && hospitals.get(c.sourceHospitalId)).filter(Boolean))],
+      grantedAt: mine[0].grantedAt,
+      expiresAt: new Date(Math.max(...mine.map(c => +c.expiresAt))),
+      hasPhoto: !!p.photoRef && canSeeProfile(mine),
+    }
+  }).sort((a, b) => +new Date(b.grantedAt) - +new Date(a.grantedAt)))
 })
 
 hospitalRouter.get('/requests', async (req, res) => {
@@ -93,20 +135,30 @@ hospitalRouter.get('/patients/:patientId/records', async (req, res) => {
   const patientId = pid(req), hospitalId = hid(req)
   let consents
   try { consents = await requireConsent(patientId, hospitalId) } catch (e) {
-    await audit(patientId, { hospitalId, staffId: me(req).id, action: 'ACCESS_DENIED', purpose: 'no valid consent' })
+    await auditThrottled(patientId, { hospitalId, staffId: me(req).id, action: 'ACCESS_DENIED', purpose: 'no valid consent' })
     throw e
   }
   const rows = (await prisma.medicalRecord.findMany({ where: readableWhere(patientId, hospitalId, consents), include: recordInclude, orderBy: { recordDate: 'desc' } })).map(shape)
   const profile = canSeeProfile(consents)
-    ? await prisma.patient.findUniqueOrThrow({ where: { id: patientId }, select: { firstName: true, lastName: true, dob: true, gender: true, phone: true, email: true, bloodGroup: true, allergies: true, chronicConditions: true, emergencyContactName: true, emergencyContactPhone: true } })
+    ? await prisma.patient.findUniqueOrThrow({ where: { id: patientId }, select: { firstName: true, lastName: true, dob: true, gender: true, phone: true, email: true, bloodGroup: true, allergies: true, chronicConditions: true, emergencyContactName: true, emergencyContactPhone: true, photoRef: true } })
     : null
-  await audit(patientId, { hospitalId, staffId: me(req).id, action: 'RECORDS_READ', purpose: 'clinical care' })
+  await auditThrottled(patientId, { hospitalId, staffId: me(req).id, action: 'RECORDS_READ', purpose: 'clinical care' })
   res.json({
-    profile,
+    profile: profile && (({ photoRef, ...rest }) => ({ ...rest, hasPhoto: !!photoRef }))(profile),
     consents: consents.map(c => ({ categories: c.categories, sourceHospitalId: c.sourceHospitalId, expiresAt: c.expiresAt })),
     verified: rows.filter(r => r.status === 'VERIFIED'),
     unverified: rows.filter(r => r.status === 'UNVERIFIED'),
   })
+})
+
+// Profile photo: only with a consent that includes personal info (PROFILE).
+hospitalRouter.get('/patients/:patientId/photo', async (req, res) => {
+  const consents = await requireConsent(pid(req), hid(req))
+  if (!canSeeProfile(consents)) throw new HttpError(403, 'patient has not shared personal info')
+  const p = await prisma.patient.findUnique({ where: { id: pid(req) }, select: { photoRef: true, photoType: true } })
+  if (!p?.photoRef) throw new HttpError(404, 'no photo')
+  await auditThrottled(pid(req), { hospitalId: hid(req), staffId: me(req).id, action: 'PHOTO_READ', purpose: 'patient identification' })
+  res.type(p.photoType ?? 'image/jpeg'); createReadStream(docPath(p.photoRef)).pipe(res)
 })
 
 hospitalRouter.get('/documents/:id', async (req, res) => {
@@ -135,6 +187,18 @@ hospitalRouter.post('/patients/:patientId/records', upload, async (req, res) => 
   await audit(patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'RECORD_CREATED', purpose: b.category })
   emit(`patient:${patientId}`, 'records', {})
   res.status(201).json(shape(r))
+})
+
+// Own hospital's unverified records only; the author or any doctor of that hospital may delete.
+hospitalRouter.delete('/records/:id', async (req, res) => {
+  const u = me(req)
+  const rec = await deleteUnverified({
+    id: String(req.params.id), hospitalId: hid(req), source: 'HOSPITAL',
+    ...(u.role === 'DOCTOR' ? {} : { createdById: u.id }),
+  })
+  await audit(rec.patientId, { hospitalId: hid(req), staffId: u.id, action: 'RECORD_DELETED', purpose: rec.category })
+  emit(`patient:${rec.patientId}`, 'records', {})
+  res.json({ ok: true })
 })
 
 hospitalRouter.post('/records/:id/documents', upload, async (req, res) => {

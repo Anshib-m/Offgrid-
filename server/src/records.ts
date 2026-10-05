@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client'
-import { checkSignature, dec, HttpError, sha256, signHash, type Tx } from './core.js'
+import { unlinkSync } from 'node:fs'
+import { docPath } from './upload.js'
+import { checkSignature, dec, HttpError, prisma, sha256, signHash, type Tx } from './core.js'
 
 export const recordInclude = {
   hospital: { select: { id: true, name: true } },
@@ -41,4 +43,14 @@ export async function verifyInTx(tx: Tx, recordId: string, doctor: { id: string;
   const flipped = await tx.medicalRecord.updateMany({ where: { id: recordId, status: 'UNVERIFIED' }, data: { status: 'VERIFIED' } })
   if (flipped.count !== 1) throw new HttpError(409, 'record already verified')
   await tx.recordVerification.create({ data: { recordId, doctorId: doctor.id, contentHash: hash, signature: signHash(doctor.signingKeyEnc, hash) } })
+}
+
+// Only unverified records can be deleted: a doctor-signed record is clinical history and stays immutable.
+export async function deleteUnverified(where: Prisma.MedicalRecordWhereInput) {
+  const rec = await prisma.medicalRecord.findFirst({ where, include: { documents: true } })
+  if (!rec) throw new HttpError(404, 'record not found')
+  if (rec.status === 'VERIFIED') throw new HttpError(409, 'verified records cannot be deleted')
+  await prisma.medicalRecord.delete({ where: { id: rec.id } })
+  for (const d of rec.documents) { try { unlinkSync(docPath(d.fileRef)) } catch { /* file already gone */ } }
+  return rec
 }

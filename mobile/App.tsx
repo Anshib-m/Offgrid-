@@ -59,7 +59,10 @@ function Login({ onDone }: { onDone: () => void }) {
           <Field label="First name" onChangeText={set('firstName')} />
           <Field label="Last name" onChangeText={set('lastName')} />
           <Field label="Date of birth (YYYY-MM-DD)" onChangeText={set('dob')} />
-          <Field label="Gender" onChangeText={set('gender')} />
+          <Text style={s.muted}>Gender</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, marginTop: 4 }}>
+            {['Male', 'Female', 'Other'].map(g => <Pressable key={g} onPress={() => set('gender')(g)} style={[s.chip, f.gender === g && s.chipOn]}><Text style={f.gender === g ? { color: '#fff' } : undefined}>{g}</Text></Pressable>)}
+          </View>
           <Field label="Phone" onChangeText={set('phone')} keyboardType="phone-pad" />
         </>}
         <Field label="Email" value={f.email} onChangeText={set('email')} keyboardType="email-address" />

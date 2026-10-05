@@ -7,7 +7,7 @@
     "migrate": "prisma migrate dev",
     "seed": "tsx src/seed.ts",
     "dev": "tsx watch src/index.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test --test-force-exit test/*.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

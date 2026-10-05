@@ -111,7 +111,15 @@ class _LoginPageState extends State<LoginPage> {
               field('firstName', 'First name'),
               field('lastName', 'Last name'),
               field('dob', 'Date of birth (YYYY-MM-DD)'),
-              field('gender', 'Gender'),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: DropdownButtonFormField<String>(
+                  initialValue: f['gender']!.text.isEmpty ? null : f['gender']!.text,
+                  decoration: const InputDecoration(labelText: 'Gender', border: OutlineInputBorder()),
+                  items: const ['Male', 'Female', 'Other'].map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
+                  onChanged: (v) => f['gender']!.text = v ?? '',
+                ),
+              ),
               field('phone', 'Phone', type: TextInputType.phone),
             ],
             field('email', 'Email', type: TextInputType.emailAddress),

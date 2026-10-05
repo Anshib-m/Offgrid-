@@ -1,12 +1,13 @@
 import { Router } from 'express'
 import { randomBytes, createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, unlinkSync } from 'node:fs'
+import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { Category } from '@prisma/client'
 import { audit, enc, emit, HttpError, prisma, pseudo, subscribe } from '../core.js'
 import { auth, me, parse } from '../auth.js'
 import { expireStale } from '../consent.js'
-import { recordInclude, shape } from '../records.js'
+import { deleteUnverified, recordInclude, shape } from '../records.js'
 import { docData, docPath, upload } from '../upload.js'
 
 export const patientRouter = Router()
@@ -26,17 +27,61 @@ const profileSelect = {
   allergies: true, chronicConditions: true, emergencyContactName: true, emergencyContactPhone: true,
 } as const
 
-patientRouter.get('/me', async (req, res) => {
-  res.json(await prisma.patient.findUniqueOrThrow({ where: { id: me(req).id }, select: profileSelect }))
-})
+// photoRef stays server-side; clients only learn whether a photo exists.
+const profileOf = async (id: string) => {
+  const { photoRef, ...p } = await prisma.patient.findUniqueOrThrow({ where: { id }, select: { ...profileSelect, photoRef: true } })
+  return { ...p, hasPhoto: !!photoRef }
+}
+
+patientRouter.get('/me', async (req, res) => { res.json(await profileOf(me(req).id)) })
 
 patientRouter.patch('/me', async (req, res) => {
   const b = parse(z.object({
+    firstName: z.string().trim().min(1).max(100), lastName: z.string().trim().min(1).max(100),
+    dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD'), currentPassword: z.string().max(128),
     phone: z.string().min(5), bloodGroup: z.string().max(5).nullable(), allergies: z.string().max(500).nullable(),
     chronicConditions: z.string().max(500).nullable(), emergencyContactName: z.string().max(100).nullable(),
     emergencyContactPhone: z.string().max(20).nullable(),
   }).partial(), req.body)
-  res.json(await prisma.patient.update({ where: { id: me(req).id }, data: b, select: profileSelect }))
+  const { dob, currentPassword, ...rest } = b
+  let newDob: Date | undefined
+  if (dob) {
+    newDob = new Date(dob)
+    if (Number.isNaN(+newDob) || newDob > new Date() || newDob < new Date('1900-01-01')) throw new HttpError(400, 'enter a real date of birth')
+    const cur = await prisma.patient.findUniqueOrThrow({ where: { id: me(req).id }, select: { dob: true, passwordHash: true } })
+    if (cur.dob.toISOString().slice(0, 10) !== dob) {
+      // the date of birth also unlocks password reset, so a signed-in session alone must not be able to change it
+      if (!currentPassword) throw new HttpError(403, 'Enter your current password to change your date of birth')
+      if (!(await bcrypt.compare(currentPassword, cur.passwordHash))) throw new HttpError(403, 'Current password is incorrect')
+      await audit(me(req).id, { action: 'DOB_CHANGED', purpose: 'patient changed date of birth' })
+    } else newDob = undefined
+  }
+  await prisma.patient.update({ where: { id: me(req).id }, data: { ...rest, ...(newDob ? { dob: newDob } : {}) } })
+  res.json(await profileOf(me(req).id))
+})
+
+// ---- profile photo (images only, 5 MB via multer)
+patientRouter.post('/me/photo', upload, async (req, res) => {
+  const f = req.file
+  if (!f) throw new HttpError(400, 'photo required')
+  if (!f.mimetype.startsWith('image/')) { try { unlinkSync(f.path) } catch {} throw new HttpError(400, 'photo must be a png or jpeg image') }
+  const old = await prisma.patient.findUniqueOrThrow({ where: { id: me(req).id }, select: { photoRef: true } })
+  await prisma.patient.update({ where: { id: me(req).id }, data: { photoRef: f.filename, photoType: f.mimetype } })
+  if (old.photoRef) { try { unlinkSync(docPath(old.photoRef)) } catch {} }
+  res.json(await profileOf(me(req).id))
+})
+
+patientRouter.get('/me/photo', async (req, res) => {
+  const p = await prisma.patient.findUniqueOrThrow({ where: { id: me(req).id }, select: { photoRef: true, photoType: true } })
+  if (!p.photoRef) throw new HttpError(404, 'no photo')
+  res.type(p.photoType ?? 'image/jpeg'); createReadStream(docPath(p.photoRef)).pipe(res)
+})
+
+patientRouter.delete('/me/photo', async (req, res) => {
+  const p = await prisma.patient.findUniqueOrThrow({ where: { id: me(req).id }, select: { photoRef: true } })
+  await prisma.patient.update({ where: { id: me(req).id }, data: { photoRef: null, photoType: null } })
+  if (p.photoRef) { try { unlinkSync(docPath(p.photoRef)) } catch {} }
+  res.json(await profileOf(me(req).id))
 })
 
 // QR/NFC payload: opaque one-time nonce, 5 min. No patient data inside.
@@ -64,6 +109,12 @@ patientRouter.post('/records', upload, async (req, res) => {
     include: recordInclude,
   })
   res.status(201).json(shape(r))
+})
+
+patientRouter.delete('/records/:id', async (req, res) => {
+  const rec = await deleteUnverified({ id: String(req.params.id), patientId: me(req).id, source: 'PATIENT_UPLOAD' })
+  await audit(rec.patientId, { action: 'RECORD_DELETED', purpose: 'patient deleted own upload' })
+  res.json({ ok: true })
 })
 
 patientRouter.get('/documents/:id', async (req, res) => {
