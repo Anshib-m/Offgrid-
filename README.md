@@ -197,6 +197,8 @@ npm run web
 
 Open the patient app at **http://localhost:5173/** and the hospital portal at **http://localhost:5173/hospital/**.
 
+**Open it on another device (optional).** On the same Wi-Fi, a phone can open `http://<your computer's IP>:5173`. To share a link over the internet from VS Code, open the **Ports** tab (next to Terminal), choose **Forward a Port**, enter **5173**, and set its visibility to Public. Port 5173 also serves the API at `/api`, so it is the only port to forward. Anyone with the link can open the demo, so stop forwarding afterwards. The camera needs the `https` link, otherwise paste the QR code. The settings in `.vscode/settings.json` label the ports.
+
 **Start over with fresh demo data:** stop the database (Ctrl+C in terminal 1), delete the `.pgdata` folder, then repeat steps 2 and 3.
 
 Optional native apps: see [Native patient apps](#native-patient-apps-optional).

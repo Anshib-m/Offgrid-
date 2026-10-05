@@ -1,0 +1,10 @@
+{
+  // Names and behaviour for forwarded ports in VS Code's Ports tab.
+  // You still click "Forward a Port" once (Ports tab, next to Terminal). Forward 5173 only: it also serves the API at /api.
+  "remote.portsAttributes": {
+    "5173": { "label": "Offgrid web: patient app + hospital portal (/hospital/)", "protocol": "http", "onAutoForward": "notify" },
+    "4000": { "label": "Offgrid API (reached through 5173 at /api)", "protocol": "http", "onAutoForward": "silent" },
+    "5433": { "label": "PostgreSQL (local only, never share)", "onAutoForward": "ignore" }
+  },
+  "remote.otherPortsAttributes": { "onAutoForward": "ignore" }
+}
