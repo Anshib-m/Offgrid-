@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { Category } from '@prisma/client'
 import { audit, auditThrottled, emit, enc, HttpError, prisma, sha256, subscribe } from '../core.js'
 import { auth, me, parse } from '../auth.js'
-import { activeConsents, canSeeProfile, expireStale, readableWhere, requireConsent } from '../consent.js'
+import { activeConsents, canSeeProfile, denyBlockedDoctor, expireStale, isDoctorBlocked, readableWhere, requireConsent } from '../consent.js'
 import { deleteUnverified, recordInclude, shape, verifyInTx } from '../records.js'
 import { docData, docPath, upload } from '../upload.js'
 
@@ -23,6 +23,11 @@ hospitalRouter.get('/events', auth(['DOCTOR', 'STAFF'], true), (req, res) => {
 })
 
 hospitalRouter.use(auth(['DOCTOR', 'STAFF']))
+
+// Every route that names a patient first checks the patient has not revoked this doctor.
+hospitalRouter.param('patientId', async (req, _res, next, id) => {
+  try { if (/^[0-9a-f-]{36}$/i.test(String(id))) await denyBlockedDoctor(me(req), String(id)); next() } catch (e) { next(e) }
+})
 
 hospitalRouter.get('/me', async (req, res) => {
   const s = await prisma.staff.findUniqueOrThrow({ where: { id: me(req).id }, select: { id: true, fullName: true, role: true, specialty: true, availability: true, hospital: { select: { id: true, name: true } } } })
@@ -74,6 +79,7 @@ hospitalRouter.post('/requests', async (req, res) => {
   const scan = b.scanId ? await prisma.scan.findFirst({ where: { id: b.scanId, hospitalId: hid(req), createdAt: { gt: new Date(Date.now() - 60 * 60_000) } } }) : null
   const patientId = scan?.patientId ?? b.patientId
   if (!patientId || (b.scanId && !scan && !b.patientId)) throw new HttpError(403, 'scan the patient QR first (scans last 60 min)')
+  await denyBlockedDoctor(me(req), patientId)
   if (!scan && !(await activeConsents(patientId, hid(req))).length) throw new HttpError(403, 'scan the patient QR first (scans last 60 min)')
   if (b.sourceHospitalId) {
     if (b.sourceHospitalId === hid(req) || !(await prisma.hospital.findUnique({ where: { id: b.sourceHospitalId } }))) throw new HttpError(400, 'bad source hospital')
@@ -102,7 +108,8 @@ hospitalRouter.post('/patients/:patientId/revoke', async (req, res) => {
 
 // Patients whose consent to this hospital is neither revoked nor expired.
 hospitalRouter.get('/active-patients', async (req, res) => {
-  const consents = await prisma.consent.findMany({ where: { hospitalId: hid(req), revokedAt: null, expiresAt: { gt: new Date() } }, orderBy: { grantedAt: 'desc' } })
+  const myBlocks = me(req).role === 'DOCTOR' ? (await prisma.doctorBlock.findMany({ where: { doctorId: me(req).id }, select: { patientId: true } })).map(b => b.patientId) : []
+  const consents = await prisma.consent.findMany({ where: { hospitalId: hid(req), revokedAt: null, expiresAt: { gt: new Date() }, patientId: { notIn: myBlocks } }, orderBy: { grantedAt: 'desc' } })
   const patients = await prisma.patient.findMany({
     where: { id: { in: [...new Set(consents.map(c => c.patientId))] } },
     select: { id: true, firstName: true, lastName: true, dob: true, photoRef: true },
@@ -164,6 +171,7 @@ hospitalRouter.get('/patients/:patientId/photo', async (req, res) => {
 hospitalRouter.get('/documents/:id', async (req, res) => {
   const d = await prisma.medicalDocument.findUnique({ where: { id: String(req.params.id) } })
   if (!d) throw new HttpError(404, 'not found')
+  await denyBlockedDoctor(me(req), d.patientId)
   const consents = await activeConsents(d.patientId, hid(req))
   const ok = await prisma.medicalRecord.findFirst({ where: { AND: [{ id: d.recordId }, readableWhere(d.patientId, hid(req), consents)] }, select: { id: true } })
   if (!ok) throw new HttpError(403, 'not authorized')
@@ -192,6 +200,8 @@ hospitalRouter.post('/patients/:patientId/records', upload, async (req, res) => 
 // Own hospital's unverified records only; the author or any doctor of that hospital may delete.
 hospitalRouter.delete('/records/:id', async (req, res) => {
   const u = me(req)
+  const pre = await prisma.medicalRecord.findFirst({ where: { id: String(req.params.id) }, select: { patientId: true } })
+  if (pre) await denyBlockedDoctor(u, pre.patientId)
   const rec = await deleteUnverified({
     id: String(req.params.id), hospitalId: hid(req), source: 'HOSPITAL',
     ...(u.role === 'DOCTOR' ? {} : { createdById: u.id }),
@@ -205,6 +215,7 @@ hospitalRouter.post('/records/:id/documents', upload, async (req, res) => {
   if (!req.file) throw new HttpError(400, 'file required')
   const rec = await prisma.medicalRecord.findFirst({ where: { id: String(req.params.id), hospitalId: hid(req), status: 'UNVERIFIED' } })
   if (!rec) throw new HttpError(404, 'unverified record of this hospital not found')
+  await denyBlockedDoctor(me(req), rec.patientId)
   await requireConsent(rec.patientId, hid(req))
   await prisma.medicalDocument.create({ data: { recordId: rec.id, patientId: rec.patientId, ...docData(req.file) } })
   res.status(201).json({ ok: true })
@@ -215,6 +226,7 @@ hospitalRouter.post('/records/:id/verify', auth(['DOCTOR']), async (req, res) =>
   const id = String(req.params.id)
   const rec = await prisma.medicalRecord.findUnique({ where: { id } })
   if (!rec) throw new HttpError(404, 'not found')
+  await denyBlockedDoctor(me(req), rec.patientId)
   if (rec.hospitalId !== hid(req)) {
     const consents = await activeConsents(rec.patientId, hid(req))
     const readable = rec.source === 'PATIENT_UPLOAD' && await prisma.medicalRecord.findFirst({ where: { AND: [{ id }, readableWhere(rec.patientId, hid(req), consents)] }, select: { id: true } })
@@ -322,6 +334,7 @@ hospitalRouter.post('/visits', async (req, res) => {
   if (!known) throw new HttpError(403, 'scan the patient QR or get their approval first')
   const doc = await prisma.staff.findFirst({ where: { id: b.doctorId, hospitalId, role: 'DOCTOR' } })
   if (!doc) throw new HttpError(404, 'doctor not found')
+  if (await isDoctorBlocked(b.patientId, doc.id)) throw new HttpError(409, `the patient has revoked access for ${doc.fullName}`)
   if (doc.availability !== 'AVAILABLE') throw new HttpError(409, `${doc.fullName} is not available right now`)
   const dup = await prisma.visit.findFirst({ where: { patientId: b.patientId, hospitalId, status: { in: [...ACTIVE] } }, include: { doctor: { select: { fullName: true } } } })
   if (dup) throw new HttpError(409, `patient already has an active visit with ${dup.doctor.fullName}`)
@@ -334,9 +347,10 @@ hospitalRouter.post('/visits', async (req, res) => {
 // Queue: active visits plus anything finished in the last 24 hours. ?mine=1 limits to the signed-in doctor.
 hospitalRouter.get('/visits', async (req, res) => {
   const since = new Date(Date.now() - 24 * 3_600_000)
+  const hidden = me(req).role === 'DOCTOR' ? (await prisma.doctorBlock.findMany({ where: { doctorId: me(req).id }, select: { patientId: true } })).map(b => b.patientId) : []
   const rows = await prisma.visit.findMany({
     where: {
-      hospitalId: hid(req), ...(req.query.mine ? { doctorId: me(req).id } : {}),
+      hospitalId: hid(req), patientId: { notIn: hidden }, ...(req.query.mine ? { doctorId: me(req).id } : {}),
       OR: [{ status: { in: [...ACTIVE] } }, { createdAt: { gt: since } }],
     },
     include: visitInclude, orderBy: { createdAt: 'asc' },
@@ -350,6 +364,7 @@ hospitalRouter.patch('/visits/:id', async (req, res) => {
   if (!v) throw new HttpError(404, 'waiting visit not found')
   const doc = await prisma.staff.findFirst({ where: { id: doctorId, hospitalId: hid(req), role: 'DOCTOR' } })
   if (!doc) throw new HttpError(404, 'doctor not found')
+  if (await isDoctorBlocked(v.patientId, doc.id)) throw new HttpError(409, `the patient has revoked access for ${doc.fullName}`)
   if (doc.availability !== 'AVAILABLE') throw new HttpError(409, `${doc.fullName} is not available right now`)
   const upd = await prisma.visit.update({ where: { id: v.id }, data: { doctorId: doc.id, assignedById: me(req).id }, include: visitInclude })
   await audit(v.patientId, { hospitalId: hid(req), staffId: me(req).id, action: 'VISIT_REASSIGNED', purpose: v.reason })
@@ -372,6 +387,7 @@ hospitalRouter.post('/visits/arrive', auth(['DOCTOR']), async (req, res) => {
   const hospitalId = hid(req), doctorId = me(req).id
   const idt = await prisma.identityToken.findFirst({ where: { nonce: token, usedAt: null, expiresAt: { gt: new Date() } }, include: { patient: true } })
   if (!idt) throw new HttpError(410, 'QR invalid, expired or already used')
+  await denyBlockedDoctor(me(req), idt.patientId)
   // The QR is only spent when it matches a visit assigned to this doctor.
   const visit = await prisma.visit.findFirst({ where: { patientId: idt.patientId, hospitalId, doctorId, status: { in: [...ACTIVE] } }, orderBy: { createdAt: 'desc' } })
   if (!visit) throw new HttpError(403, 'This patient is not assigned to you')

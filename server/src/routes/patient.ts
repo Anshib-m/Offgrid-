@@ -185,9 +185,54 @@ patientRouter.post('/consents/:id/revoke', async (req, res) => {
 patientRouter.get('/visits', async (req, res) => {
   const rows = await prisma.visit.findMany({
     where: { patientId: me(req).id }, orderBy: { createdAt: 'desc' }, take: 10,
-    include: { doctor: { select: { fullName: true, specialty: true } }, hospital: { select: { name: true } } },
+    include: { doctor: { select: { id: true, fullName: true, specialty: true } }, hospital: { select: { name: true } } },
   })
-  res.json(rows.map(v => ({ id: v.id, status: v.status, reason: v.reason, createdAt: v.createdAt, arrivedAt: v.arrivedAt, doctor: { name: v.doctor.fullName, specialty: v.doctor.specialty }, hospital: v.hospital.name })))
+  res.json(rows.map(v => ({ id: v.id, status: v.status, reason: v.reason, createdAt: v.createdAt, arrivedAt: v.arrivedAt, doctor: { id: v.doctor.id, name: v.doctor.fullName, specialty: v.doctor.specialty }, hospital: v.hospital.name })))
+})
+
+// ---- doctors: revoke or restore one doctor without touching the rest of the hospital's access
+const doctorSelect = { id: true, fullName: true, specialty: true, hospital: { select: { name: true } } } as const
+patientRouter.get('/doctors', async (req, res) => {
+  const patientId = me(req).id
+  const visits = await prisma.visit.findMany({ where: { patientId }, orderBy: { createdAt: 'desc' }, select: { status: true, createdAt: true, doctor: { select: doctorSelect } } })
+  const blocks = await prisma.doctorBlock.findMany({ where: { patientId }, select: { doctor: { select: doctorSelect } } })
+  const out = new Map<string, { id: string; name: string; specialty: string | null; hospital: string; lastVisit: Date | null; activeVisit: boolean; revoked: boolean }>()
+  for (const v of visits) {
+    const cur = out.get(v.doctor.id) ?? { id: v.doctor.id, name: v.doctor.fullName, specialty: v.doctor.specialty, hospital: v.doctor.hospital.name, lastVisit: v.createdAt, activeVisit: false, revoked: false }
+    cur.activeVisit ||= v.status === 'WAITING' || v.status === 'IN_CONSULT'
+    out.set(v.doctor.id, cur)
+  }
+  for (const b of blocks) {
+    const cur = out.get(b.doctor.id) ?? { id: b.doctor.id, name: b.doctor.fullName, specialty: b.doctor.specialty, hospital: b.doctor.hospital.name, lastVisit: null, activeVisit: false, revoked: true }
+    cur.revoked = true
+    out.set(b.doctor.id, cur)
+  }
+  res.json([...out.values()])
+})
+
+patientRouter.post('/doctors/:doctorId/revoke', async (req, res) => {
+  const patientId = me(req).id
+  const doctorId = parse(z.string().uuid(), req.params.doctorId)
+  const doctor = await prisma.staff.findFirst({ where: { id: doctorId, role: 'DOCTOR', visitsAsDoctor: { some: { patientId } } }, select: { id: true, hospitalId: true } })
+  if (!doctor) throw new HttpError(404, 'no visit with this doctor')
+  await prisma.$transaction(async tx => {
+    await tx.doctorBlock.upsert({ where: { patientId_doctorId: { patientId, doctorId } }, update: {}, create: { patientId, doctorId } })
+    await tx.visit.updateMany({ where: { patientId, doctorId, status: { in: ['WAITING', 'IN_CONSULT'] } }, data: { status: 'CANCELLED', completedAt: new Date() } })
+    await audit(patientId, { hospitalId: doctor.hospitalId, staffId: doctorId, action: 'DOCTOR_REVOKED', purpose: 'patient revoked this doctor' }, tx)
+  })
+  emit(`hospital:${doctor.hospitalId}`, 'visit', {})
+  res.json({ ok: true })
+})
+
+patientRouter.post('/doctors/:doctorId/allow', async (req, res) => {
+  const patientId = me(req).id
+  const doctorId = parse(z.string().uuid(), req.params.doctorId)
+  const removed = await prisma.doctorBlock.deleteMany({ where: { patientId, doctorId } })
+  if (!removed.count) throw new HttpError(404, 'this doctor is not revoked')
+  const doc = await prisma.staff.findUniqueOrThrow({ where: { id: doctorId }, select: { hospitalId: true } })
+  await audit(patientId, { hospitalId: doc.hospitalId, staffId: doctorId, action: 'DOCTOR_ALLOWED', purpose: 'patient allowed this doctor again' })
+  emit(`hospital:${doc.hospitalId}`, 'visit', {})
+  res.json({ ok: true })
 })
 
 // ---- reminders and access history

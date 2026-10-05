@@ -27,5 +27,13 @@ export function readableWhere(patientId: string, hospitalId: string, consents: A
 
 export const canSeeProfile = (consents: { categories: Category[] }[]) => consents.some(c => c.categories.includes('PROFILE'))
 
+export const isDoctorBlocked = async (patientId: string, doctorId: string) =>
+  !!(await prisma.doctorBlock.findUnique({ where: { patientId_doctorId: { patientId, doctorId } }, select: { id: true } }))
+
+// A patient can revoke one doctor without cutting off the whole hospital.
+export async function denyBlockedDoctor(user: { id: string; role: string }, patientId: string) {
+  if (user.role === 'DOCTOR' && (await isDoctorBlocked(patientId, user.id))) throw new HttpError(403, 'The patient has revoked your access')
+}
+
 export const expireStale = () =>
   prisma.accessRequest.updateMany({ where: { status: 'PENDING', expiresAt: { lt: new Date() } }, data: { status: 'EXPIRED' } })

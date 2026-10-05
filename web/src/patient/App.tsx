@@ -130,7 +130,7 @@ const daysLeft = (d: string) => Math.ceil((+new Date(d) - Date.now()) / 86_400_0
 const ACTION_LABEL: Record<string, string> = {
   PHOTO_READ: 'viewed your profile photo', ACCESS_RELINQUISHED: 'ended its access to your records', PASSWORD_RESET: 'reset your password', RECORD_DELETED: 'deleted a record', DOB_CHANGED: 'changed your date of birth', PATIENT_REGISTERED: 'registered you',
   QR_SCANNED: 'scanned your QR', ACCESS_REQUESTED: 'requested access', CONSENT_GRANTED: 'access approved', CONSENT_DENIED: 'request denied', CONSENT_REVOKED: 'access revoked',
-  RECORDS_READ: 'viewed your records', RECORD_CREATED: 'added a record', RECORD_VERIFIED: 'verified a record', DISCHARGED: 'discharged you', FOLLOWUP_CREATED: 'set a follow-up', FOLLOWUP_DELETED: 'removed a follow-up', VISIT_ASSIGNED: 'assigned you to a doctor', VISIT_REASSIGNED: 'changed your doctor', VISIT_CANCELLED: 'cancelled your visit', VISIT_STARTED: 'started your consultation', VISIT_COMPLETED: 'completed your visit', DOCUMENT_READ: 'opened a document',
+  RECORDS_READ: 'viewed your records', RECORD_CREATED: 'added a record', RECORD_VERIFIED: 'verified a record', DISCHARGED: 'discharged you', FOLLOWUP_CREATED: 'set a follow-up', FOLLOWUP_DELETED: 'removed a follow-up', VISIT_ASSIGNED: 'assigned you to a doctor', VISIT_REASSIGNED: 'changed your doctor', VISIT_CANCELLED: 'cancelled your visit', VISIT_STARTED: 'started your consultation', VISIT_COMPLETED: 'completed your visit', DOCTOR_REVOKED: 'revoked a doctor', DOCTOR_ALLOWED: 'allowed a doctor again', DOCUMENT_READ: 'opened a document',
 }
 const actionLabel = (a: string) => (a.startsWith('EMERGENCY_ACCESS') ? 'used your emergency card' : ACTION_LABEL[a] ?? a.toLowerCase().replace(/_/g, ' '))
 
@@ -142,8 +142,10 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
   const [cards, setCards] = useState<any[] | null>(null)
   const [hist, setHist] = useState<any[]>([])
   const [visits, setVisits] = useState<any[]>([])
+  const [doctors, setDoctors] = useState<any[]>([])
   const load = useCallback(() => {
     api.call('GET', '/patient/visits').then(setVisits).catch(() => {})
+    api.call('GET', '/patient/doctors').then(setDoctors).catch(() => {})
     api.call('GET', '/patient/me').then(setMe).catch(() => {})
     api.call('GET', '/patient/consents').then(setConsents).catch(() => {})
     api.call('GET', '/patient/emergency-cards').then(setCards).catch(() => {})
@@ -157,6 +159,11 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
     return () => clearInterval(t)
   }, [qr])
 
+  const revokeDoctor = (d: { id: string; name: string }) => {
+    if (!confirm(`Revoke ${d.name}? They lose access to your records and any visit with them is cancelled. Other staff at that hospital keep the access you gave.`)) return
+    guard(toast, async () => { await api.call('POST', `/patient/doctors/${d.id}/revoke`); toast(`${d.name} revoked`); load() })
+  }
+  const allowDoctor = (d: { id: string; name: string }) => guard(toast, async () => { await api.call('POST', `/patient/doctors/${d.id}/allow`); toast(`${d.name} allowed again`); load() })
   const active = consents.filter(c => !c.revokedAt && new Date(c.expiresAt) > new Date())
   const next = reminders.filter(r => r.status === 'UPCOMING').sort((a, b) => +new Date(a.followUpDate) - +new Date(b.followUpDate))[0]
   const missing = me ? PROFILE_FIELDS.filter(([k]) => !me[k]) : []
@@ -177,6 +184,7 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
           {v.status === 'WAITING'
             ? <div className="help" style={{ marginTop: 10, marginBottom: 0 }}>Go to the doctor and show your QR when you arrive. The doctor scans it to start your consultation.</div>
             : <div className="mono" style={{ marginTop: 8 }}>Started {fmtTime(v.arrivedAt)}</div>}
+          <button className="danger" style={{ marginTop: 12 }} onClick={() => revokeDoctor({ id: v.doctor.id, name: v.doctor.name })}><Icon n="person_off" />Revoke this doctor</button>
         </div>
       ))}
 
@@ -215,6 +223,25 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
         ))}
       </div>
 
+      {doctors.length > 0 && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}><Icon n="stethoscope" style={{ color: 'var(--secondary)' }} /> My doctors</h3>
+          <p className="muted">Doctors you were sent to. Revoking one cuts off only that doctor. The hospital's other staff keep what you approved.</p>
+          {doctors.map(d => (
+            <div key={d.id} className="row" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <b>{d.name}</b>{d.specialty && <span className="muted"> · {d.specialty}</span>}
+                <div className="muted">{d.hospital}</div>
+                <div style={{ marginTop: 4 }}><Badge kind={d.revoked ? 'revoked' : 'approved'}>{d.revoked ? 'REVOKED' : d.activeVisit ? 'ASSIGNED' : 'ALLOWED'}</Badge></div>
+              </div>
+              {d.revoked
+                ? <button className="ghost" style={{ minHeight: 40 }} onClick={() => allowDoctor(d)}>Allow again</button>
+                : <button className="danger" style={{ minHeight: 40 }} onClick={() => revokeDoctor(d)}>Revoke doctor</button>}
+            </div>
+          ))}
+        </div>
+      )}
+
       {me && (
         <div className="card">
           <div className="row" style={{ flexWrap: 'nowrap', gap: 16 }}>
@@ -249,7 +276,7 @@ function Home({ pending, reminders, go, toast }: { pending: number; reminders: a
         {hist.length === 0 && <p className="muted">Nothing yet.</p>}
         {hist.map(h => (
           <div key={h.txId} style={{ marginTop: 10 }}>
-            <div><b>{h.hospital}</b> {actionLabel(h.action)}</div>
+            <div><b>{h.action.startsWith('DOCTOR_') ? 'You' : h.hospital}</b> {actionLabel(h.action)}{h.action.startsWith('DOCTOR_') && h.hospital ? ` at ${h.hospital}` : ''}</div>
             <div className="mono">{fmtTime(h.at)}</div>
           </div>
         ))}
@@ -374,7 +401,7 @@ function History({ onBack }: { onBack: () => void }) {
               <div key={h.txId} className="histrow">
                 <div className={`recicon ${emergency ? 'warn' : ''}`}><Icon n={emergency ? 'emergency' : h.action.startsWith('CONSENT') ? 'verified_user' : h.action.startsWith('RECORD') || h.action === 'DOCUMENT_READ' ? 'description' : 'visibility'} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div><b>{h.hospital ?? 'You'}</b> {actionLabel(h.action)}</div>
+                  <div><b>{h.action.startsWith('DOCTOR_') ? 'You' : h.hospital ?? 'You'}</b> {actionLabel(h.action)}{h.action.startsWith('DOCTOR_') && h.hospital ? ` at ${h.hospital}` : ''}</div>
                   {h.purpose && <div className="muted">{h.purpose}</div>}
                   <div className="mono">{fmtTime(h.at)} · tx {h.txId.slice(0, 8)}</div>
                 </div>

@@ -68,6 +68,7 @@ A consent-first data exchange between patients and hospitals:
 - One-time QR identity. Approve, narrow or deny each request, with a duration. Revoke any time.
 - History split into **Verified** (doctor-signed) and **Unverified** (self-uploaded), with photos shown inline.
 - Home dashboard: your visit and doctor, next follow-up, who can see my data now, profile completeness, emergency card, recent activity. Full access-history page.
+- **My doctors**: revoke a single doctor without cutting off the rest of the hospital, and allow them again later. Revoking also cancels any current visit with that doctor.
 - Profile photo, name and date-of-birth editing, forgot-password reset, delete your own unverified uploads.
 - Emergency card and family codes.
 
@@ -206,7 +207,7 @@ Optional native apps: see [Native patient apps](#native-patient-apps-optional).
 1. Sign in to the patient app.
 2. At a hospital, tap **Show my QR** on Home and let the desk scan it.
 3. When a hospital asks for data, open **Requests**. Untick anything you don't want to share, pick how long, and tap **Approve** (or **Deny**).
-4. Check **Home** for your visit, follow-ups and who can see your data. Tap **Revoke** to cut a hospital off. Tap **Recent activity** for the full access history.
+4. Check **Home** for your visit, follow-ups and who can see your data. Tap **Revoke** to cut a hospital off, or **Revoke doctor** under "My doctors" to cut off just one doctor. Tap **Recent activity** for the full access history.
 
 **Reception**
 1. Sign in to the hospital portal. On **Patient Desk**, paste the patient's QR code and request the categories you need.
@@ -262,7 +263,7 @@ Asha already has history at City General (a surgery, lab, medication and dischar
 
 ## Testing and evaluation results
 
-`npm test` runs an end-to-end scenario with **76 assertions** against the real API and PostgreSQL. **Latest result: 1 test, 1 pass, 0 fail.** Type checks (`tsc`) pass for the API and the web apps.
+`npm test` runs an end-to-end scenario with **90 assertions** against the real API and PostgreSQL. **Latest result: 1 test, 1 pass, 0 fail.** Type checks (`tsc`) pass for the API and the web apps.
 
 It covers sign-in and permissions, one-time QR use, consent checks (including narrowing, revoking and hospital-ended access), record verification and signatures, deletion rules, profile photo rules, date-of-birth changes, password reset with lockout, doctor assignment and the arrival scan, emergency access and audit visibility.
 
@@ -273,6 +274,7 @@ Full case table, how to reproduce, screenshots and the limits of this testing: [
 - **No real data.** Everything is synthetic (see Safety). No secrets are committed: `.env` is git-ignored and only placeholder `.env.example` files are tracked.
 - The QR holds a one-time code valid for 5 minutes. A scan, or existing active consent, is required before a hospital can send a request.
 - Every read needs a valid, unexpired, unrevoked consent **and** a matching category **and** a matching source hospital.
+- A patient can revoke a single doctor. That doctor is refused everywhere (records, documents, signing, requests, arrival scan) while the hospital's other staff keep their access.
 - Only the assigned doctor's scan can start a consultation. A QR for a patient who is not assigned to that doctor is refused and is not used up.
 - Signed records cannot be edited or deleted (database rule). The audit log cannot be edited or deleted (database rule).
 - Audit entries use a scrambled patient reference (`HMAC-SHA256(patientId, secret)`). This is **pseudonymization**, not anonymization. Hashing alone is not treated as anonymous.

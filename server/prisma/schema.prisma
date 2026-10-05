@@ -102,6 +102,7 @@ model Staff {
   availability   DoctorStatus         @default(AVAILABLE) // only meaningful for doctors
   visitsAsDoctor Visit[]              @relation("doctorVisits")
   visitsAssigned Visit[]              @relation("assignedVisits")
+  blockedBy      DoctorBlock[]
 }
 
 model Patient {
@@ -126,6 +127,7 @@ model Patient {
   records               MedicalRecord[]
   accessRequests        AccessRequest[]
   visits                Visit[]
+  doctorBlocks          DoctorBlock[]
 }
 
 // Short-lived opaque QR/NFC token. Carries no patient data.
@@ -318,4 +320,17 @@ model Visit {
   @@index([hospitalId, status])
   @@index([doctorId, status])
   @@index([patientId, status])
+}
+
+// The patient revoked this one doctor. The doctor's hospital keeps whatever consent it has for its other staff.
+model DoctorBlock {
+  id        String   @id @default(uuid()) @db.Uuid
+  patientId String   @db.Uuid
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId  String   @db.Uuid
+  doctor    Staff    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([patientId, doctorId])
+  @@index([doctorId])
 }

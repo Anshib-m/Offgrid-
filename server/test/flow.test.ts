@@ -120,6 +120,25 @@ test('consent, verification, provenance, emergency', async () => {
   assert.equal((await call('POST', `/hospital/visits/${v2.body.id}/cancel`, deskB)).status, 200)
   assert.equal((await call('POST', `/hospital/visits/${v2.body.id}/cancel`, deskB)).status, 404)
 
+  // the patient revokes ONE doctor: that doctor is locked out, the hospital's other staff keep their access
+  const v3 = await call('POST', '/hospital/visits', deskB, { patientId: scan.patientId, doctorId: mehta.id, reason: 'Second opinion' })
+  assert.equal(v3.status, 201)
+  assert.equal((await call('POST', `/patient/doctors/${crypto.randomUUID()}/revoke`, patient)).status, 404, 'only doctors the patient has been sent to')
+  assert.equal((await call('POST', `/patient/doctors/${mehta.id}/revoke`, patient)).status, 200)
+  assert.equal((await call('GET', '/patient/visits', patient)).body[0].status, 'CANCELLED', 'revoking ends the visit')
+  assert.equal((await call('GET', `/hospital/patients/${scan.patientId}/records`, docB)).status, 403, 'revoked doctor is locked out')
+  assert.equal((await call('GET', `/hospital/patients/${scan.patientId}/records`, deskB)).status, 200, 'reception keeps the hospital consent')
+  assert.ok(!(await call('GET', '/hospital/active-patients', docB)).body.some((a: any) => a.patientId === scan.patientId), 'hidden from the revoked doctor')
+  assert.ok((await call('GET', '/hospital/active-patients', deskB)).body.some((a: any) => a.patientId === scan.patientId), 'still listed for reception')
+  assert.equal((await call('POST', '/hospital/visits', deskB, { patientId: scan.patientId, doctorId: mehta.id, reason: 'try again' })).status, 409, 'cannot assign a revoked doctor')
+  const rvQr = (await call('POST', '/patient/qr', patient)).body.token
+  assert.equal((await call('POST', '/hospital/visits/arrive', docB, { token: rvQr })).status, 403, 'revoked doctor cannot start a consultation')
+  const doctorsList = (await call('GET', '/patient/doctors', patient)).body
+  assert.equal(doctorsList.find((d: any) => d.id === mehta.id).revoked, true)
+  assert.equal((await call('POST', `/patient/doctors/${mehta.id}/allow`, patient)).status, 200)
+  assert.equal((await call('GET', `/hospital/patients/${scan.patientId}/records`, docB)).status, 200, 'allowed again')
+  assert.equal((await call('POST', `/patient/doctors/${mehta.id}/allow`, patient)).status, 404, 'nothing left to allow')
+
   // revoke ends access immediately
   const consents = (await call('GET', '/patient/consents', patient)).body
   const active = consents.find((c: any) => !c.revokedAt && c.hospital?.startsWith('Riverside'))

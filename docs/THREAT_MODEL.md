@@ -37,7 +37,8 @@ Patient, hospital reception staff, doctor, a hospital acting outside its consent
 | 14 | Data exposure at rest | Clinical notes encrypted with AES-256-GCM. Signing keys encrypted. Passwords hashed | Uploaded files are not encrypted. Keys come from environment variables |
 | 15 | Hospital keeps a patient after discharge | Patient can revoke any time. A hospital can end its own access. Consents expire automatically | None |
 | 16 | Patient is sent to or examined by the wrong doctor, or a consultation is started without the patient present | Reception assigns only an available doctor of the same hospital. A consultation starts only when that doctor scans the patient's live one-time QR. A QR for someone not assigned to the scanning doctor is refused and not spent. Every assignment, start and completion is audited | A doctor could still scan a patient who is physically elsewhere if shown the QR |
-| 17 | PII leaking through logs or errors | 500 errors return a generic message. Audit log stores no names | Dev server logs may print stack traces |
+| 17 | A patient no longer trusts one specific doctor but still needs the hospital | Patient can revoke a single doctor. The doctor is refused on every route that names the patient, loses the patient from their lists, cannot be assigned or scan the patient, and any visit is cancelled. The hospital's other staff keep their access. Revoke and allow are audited | Emergency "break glass" access is still available to a revoked doctor, because it exists for life-threatening cases and is always audited and notified |
+| 18 | PII leaking through logs or errors | 500 errors return a generic message. Audit log stores no names | Dev server logs may print stack traces |
 
 ## Human oversight of consequential actions
 
